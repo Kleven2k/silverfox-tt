@@ -11,3 +11,15 @@ test/sim_build
 test/__pycache__/
 test/results.xml
 test/gate_level_netlist.v
+
+# Hardcaml / OCaml build artifacts
+hardcaml/_build/
+hardcaml/*.install
+hardcaml/.merlin
+
+# Tiny Tapeout support tooling (auto-cloned by devcontainer)
+tt/
+
+# Dune-promoted binaries
+hardcaml/bin/*.exe
+hardcaml/bin/*.bc
