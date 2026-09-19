@@ -21,5 +21,44 @@ module O : sig
   [@@deriving hardcaml]
 end
 
-val create : Signal.t I.t -> Signal.t O.t
-val hierarchical : Scope.t -> Signal.t I.t -> Signal.t O.t
+module Opcode : sig
+  val set : int
+  val wait_ : int
+  val in_ : int
+  val out : int
+  val jmp : int
+  val mov : int
+  val halt : int
+end
+
+module Cond : sig
+  val always : int
+  val not_tx_valid : int
+  val x_not_zero : int
+  val rx_high : int
+end
+
+module Reg_id : sig
+  val pin_tx : int
+  val pin_tx_ready : int
+  val reg_x : int
+  val pin_rx : int
+end
+
+val pc_width : int
+val mem_depth : int
+val encode : opcode:int -> arg1:int -> arg2:int -> int
+val default_program : int list
+val create : program:int list -> Signal.t I.t -> Signal.t O.t
+val hierarchical : program:int list -> Scope.t -> Signal.t I.t -> Signal.t O.t
+
+module Debug_o : sig
+  type 'a t =
+    { uo_out : 'a
+    ; x_reg : 'a
+    ; pc : 'a
+    }
+  [@@deriving hardcaml]
+end
+
+val create_debug : program:int list -> Signal.t I.t -> Signal.t Debug_o.t
