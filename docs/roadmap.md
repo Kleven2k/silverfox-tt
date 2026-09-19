@@ -9,17 +9,17 @@
 
 ## Phase 2 - UART
 - [ ] Bit-banged UART TX program (microcode), timed via WAIT
-- [ ] Bit-banged UART RX progra, timed via WAIT + COND_RX_HIGH
-- [ ] Verify agains a real UART (FPGA loopback or logic analuzer, if available)
+- [ ] Bit-banged UART RX program, timed via WAIT + COND_RX_HIGH
+- [ ] Verify aagainst a real UART (FPGA loopback or logic analyzer, if available)
 - [ ] Document as first entry in protocol-programs.md
 
 ## Phase 3 - SPI
-- [ ] SPI controller program (clock generation via toggeling pins in microcode)
-- [ ] Verify agains a known SPI peripheral or loopback
+- [ ] SPI controller program (clock generation via toggling pins in microcode)
+- [ ] Verify aagainst a known SPI peripheral or loopback
 
 ## Phase 4 - I2C
 - [ ] I2C controller program (open-drain SDA handling - may need uio_oe logic)
-- [ ] Verify agains a known I2C peripheral
+- [ ] Verify aagainst a known I2C peripheral
 
 ## Phase 5 - Verification infrastructure
 - [ ] hardcaml_verify equivalence checking (golden OCaml model vs generated RTL)
@@ -27,11 +27,11 @@
 - [ ] Coverage tracking / reporting
 
 ## Phase 6 - Area/timing closure
-- [ ] Run synthesis, check cell area gainst 24-tile budget
+- [ ] Run synthesis, check cell area against 24-tile budget
 - [ ] Evaluate instruction memory: flip-flops vs SRAM
 - [ ] Place-and-route, timing closure at target clock frequency
 
-## Streatch goals (attempt only if core phases land comfortably early)
+## Stretch goals (attempt only if core phases land comfortably early)
 - [ ] Low-speed USB
 - [ ] 10BASE-T Ethernet
 - [ ] JTAG / SWD / PS/2 / CAN - pick one if time allows
