@@ -3,7 +3,7 @@
 
 import cocotb
 from cocotb.clock import Clock
-from cocotb.triggers import ClockCycles, RisingEdge
+from cocotb.triggers import ClockCycles
 
 # --- Helpers ---
 async def reset(dut):
@@ -15,55 +15,61 @@ async def reset(dut):
     await ClockCycles(dut.clk, 10)
     dut.rst_n.value = 1
 
+
 async def start_clock(dut):
-    """Set the clock period to 10 ns (100 MHz)."""
+    """Set the clock period to 10 ns (100 MHz simulated clock).
+    Note: this is the *simulation* clock speed cocotb drives the DUT
+    with -- unrelated to the 25 MHz clock_hz baked into the UART TX
+    program's own bit-timing math (cycles_per_bit was computed against
+    25 MHz at generation time, so the design's *behavior* -- how many
+    clock edges per bit -- is fixed regardless of how fast we simulate
+    those edges)."""
     cocotb.start_soon(Clock(dut.clk, 10, unit="ns").start())
 
+
 @cocotb.test()
-async def test_project(dut):
-    """Verify the default program (SET tx=1 / SET tx=0 / JMP always->0)
-    produces a periodic TX waveform: one high cycle out of every three,
-    repeating indefinitely. This mirrors the Hardcaml-side SET/JMP test
-    in hardcaml/test/isa_test.ml, but runs against the actual generated
-    Verilog (src/project.v) via a real HDL simulator, per Tiny Tapeout's
-    required test flow -- rather than pinning an exact absolute cycle
-    sequence (which proved fragile to simulator-specific timing
-    differences during Hardcaml-side test development), this checks the
-    periodic *shape* of the waveform, which is what actually matters.
+async def test_uart_tx_framing(dut):
+    """Verify UART TX (0x55, 8-N-1) against the real generated Verilog,
+    at the actual target timing (25 MHz clock, 115200 baud ->
+    cycles_per_bit = 217). Mirrors the Hardcaml-side uart_test.ml
+    assertion, but runs against src/project.v via Icarus Verilog, per
+    Tiny Tapeout's required test flow.
+
+    Samples one value per bit-block at a fixed offset (well clear of
+    the block's edges), rather than inferring bit boundaries from
+    merged runs in a raw per-cycle trace -- see decisions.md for why
+    that approach proved unreliable during Hardcaml-side development.
     """
     dut._log.info("Start")
 
     await start_clock(dut)
     await reset(dut)
 
-    dut._log.info("Sample TX (uo_out bit 0) over multiple periods")
+    byte_sent = 0x55
+    clock_hz = 25_000_000
+    baud_rate = 115_200
+    cycles_per_bit = clock_hz // baud_rate  # 217
+    n = cycles_per_bit - 1  # 216
+    cycles_per_block = n + 3  # SET TX + SET X + (n+1) JMP passes = 219
+    sample_offset = 10  # comfortably inside the block, past the edge
 
-    num_cycles = 12  # 4 full periods of the 3-instruction toggle loop
-    tx_trace = []
-    for _ in range(num_cycles):
-        await ClockCycles(dut.clk, 1)
-        tx_trace.append(int(dut.uo_out.value) & 1)
+    num_bits = 10  # 1 start + 8 data + 1 stop
 
-    dut._log.info(f"tx_trace = {tx_trace}")
+    sampled_bits = []
+    for _bit_index in range(num_bits):
+        for cycle_in_block in range(1, cycles_per_block + 1):
+            await ClockCycles(dut.clk, 1)
+            if cycle_in_block == sample_offset:
+                sampled_bits.append(int(dut.uo_out.value) & 1)
 
-    # Split into consecutive groups of 3 and check every group is
-    # identical -- this proves the waveform is genuinely periodic with
-    # period 3, without pinning which absolute cycle the pattern starts
-    # on (that phase can differ between simulators/harnesses).
-    period = 3
-    groups = [tx_trace[i:i + period] for i in range(0, len(tx_trace), period)]
-    first_group = groups[0]
-    for group in groups[1:]:
-        assert group == first_group, (
-            f"TX waveform is not periodic with period {period}: "
-            f"expected every group to equal {first_group}, got {tx_trace}"
-        )
+    dut._log.info(f"sampled_bits = {sampled_bits}")
 
-    # Within one period, exactly one cycle should be high (the SET tx=1
-    # instruction), matching the program's structure.
-    assert sum(first_group) == 1, (
-        f"Expected exactly one high cycle per period of {period}, "
-        f"got {first_group} (full trace: {tx_trace})"
+    data_bits = [(byte_sent >> i) & 1 for i in range(8)]
+    expected_bits = [0] + data_bits + [1]
+
+    assert sampled_bits == expected_bits, (
+        f"UART TX framing mismatch: expected {expected_bits}, "
+        f"got {sampled_bits}"
     )
 
-    dut._log.info("TX waveform confirmed periodic with correct duty cycle")
+    dut._log.info("UART TX framing confirmed correct against generated Verilog")

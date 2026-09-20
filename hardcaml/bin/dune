@@ -1,7 +1,8 @@
 (executables
  (modes byte exe)
  (names generate)
- (libraries core.command core_unix.command_unix core hardcaml silverfox jane_rope)
+ (libraries core.command core_unix.command_unix core hardcaml silverfox
+   silverfox_programs jane_rope)
  (preprocess
   (pps ppx_jane))
  (promote))

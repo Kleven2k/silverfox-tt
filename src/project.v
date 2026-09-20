@@ -30,9 +30,19 @@ module silverfox_isa (
     wire signal_mux_3;
     wire signal_mux_4;
     wire [15:0] signal_const_5;
+    wire [15:0] signal_const_7;
+    wire [15:0] signal_const_8;
+    wire [15:0] signal_const_9;
+    wire [15:0] signal_const_10;
+    wire [15:0] signal_const_12;
+    wire [15:0] signal_const_13;
+    wire [15:0] signal_const_16;
+    wire [15:0] signal_const_19;
+    wire [15:0] signal_const_22;
+    wire [15:0] signal_const_25;
+    wire [15:0] signal_const_28;
+    wire [15:0] signal_const_31;
     wire [15:0] signal_const_34;
-    wire [15:0] signal_const_35;
-    wire [15:0] signal_const_36;
     wire [4:0] signal_const_37;
     wire [4:0] signal_const_38;
     wire [4:0] signal_add;
@@ -126,9 +136,19 @@ module silverfox_isa (
     assign signal_mux_3 = signal_eq_13 ? signal_reg_2 : signal_mux_2;
     assign signal_mux_4 = signal_eq_14 ? signal_reg_2 : signal_mux_3;
     assign signal_const_5 = 16'b1110000000000000;
-    assign signal_const_34 = 16'b1000000000000000;
-    assign signal_const_35 = 16'b0000000000000000;
-    assign signal_const_36 = 16'b0000000000000001;
+    assign signal_const_7 = 16'b1000100000011101;
+    assign signal_const_8 = 16'b0000100011011000;
+    assign signal_const_9 = 16'b0000000000000001;
+    assign signal_const_10 = 16'b1000100000011010;
+    assign signal_const_12 = 16'b0000000000000000;
+    assign signal_const_13 = 16'b1000100000010111;
+    assign signal_const_16 = 16'b1000100000010100;
+    assign signal_const_19 = 16'b1000100000010001;
+    assign signal_const_22 = 16'b1000100000001110;
+    assign signal_const_25 = 16'b1000100000001011;
+    assign signal_const_28 = 16'b1000100000001000;
+    assign signal_const_31 = 16'b1000100000000101;
+    assign signal_const_34 = 16'b1000100000000010;
     assign signal_const_37 = 5'b00000;
     assign signal_const_38 = 5'b00001;
     assign signal_add = signal_reg_1 + signal_const_38;
@@ -217,65 +237,65 @@ module silverfox_isa (
     always @* begin
         case (signal_reg_1)
         0:
-            signal_mux_23 <= signal_const_36;
+            signal_mux_23 <= signal_const_12;
         1:
-            signal_mux_23 <= signal_const_35;
+            signal_mux_23 <= signal_const_8;
         2:
             signal_mux_23 <= signal_const_34;
         3:
-            signal_mux_23 <= signal_const_5;
+            signal_mux_23 <= signal_const_9;
         4:
-            signal_mux_23 <= signal_const_5;
+            signal_mux_23 <= signal_const_8;
         5:
-            signal_mux_23 <= signal_const_5;
+            signal_mux_23 <= signal_const_31;
         6:
-            signal_mux_23 <= signal_const_5;
+            signal_mux_23 <= signal_const_12;
         7:
-            signal_mux_23 <= signal_const_5;
+            signal_mux_23 <= signal_const_8;
         8:
-            signal_mux_23 <= signal_const_5;
+            signal_mux_23 <= signal_const_28;
         9:
-            signal_mux_23 <= signal_const_5;
+            signal_mux_23 <= signal_const_9;
         10:
-            signal_mux_23 <= signal_const_5;
+            signal_mux_23 <= signal_const_8;
         11:
-            signal_mux_23 <= signal_const_5;
+            signal_mux_23 <= signal_const_25;
         12:
-            signal_mux_23 <= signal_const_5;
+            signal_mux_23 <= signal_const_12;
         13:
-            signal_mux_23 <= signal_const_5;
+            signal_mux_23 <= signal_const_8;
         14:
-            signal_mux_23 <= signal_const_5;
+            signal_mux_23 <= signal_const_22;
         15:
-            signal_mux_23 <= signal_const_5;
+            signal_mux_23 <= signal_const_9;
         16:
-            signal_mux_23 <= signal_const_5;
+            signal_mux_23 <= signal_const_8;
         17:
-            signal_mux_23 <= signal_const_5;
+            signal_mux_23 <= signal_const_19;
         18:
-            signal_mux_23 <= signal_const_5;
+            signal_mux_23 <= signal_const_12;
         19:
-            signal_mux_23 <= signal_const_5;
+            signal_mux_23 <= signal_const_8;
         20:
-            signal_mux_23 <= signal_const_5;
+            signal_mux_23 <= signal_const_16;
         21:
-            signal_mux_23 <= signal_const_5;
+            signal_mux_23 <= signal_const_9;
         22:
-            signal_mux_23 <= signal_const_5;
+            signal_mux_23 <= signal_const_8;
         23:
-            signal_mux_23 <= signal_const_5;
+            signal_mux_23 <= signal_const_13;
         24:
-            signal_mux_23 <= signal_const_5;
+            signal_mux_23 <= signal_const_12;
         25:
-            signal_mux_23 <= signal_const_5;
+            signal_mux_23 <= signal_const_8;
         26:
-            signal_mux_23 <= signal_const_5;
+            signal_mux_23 <= signal_const_10;
         27:
-            signal_mux_23 <= signal_const_5;
+            signal_mux_23 <= signal_const_9;
         28:
-            signal_mux_23 <= signal_const_5;
+            signal_mux_23 <= signal_const_8;
         29:
-            signal_mux_23 <= signal_const_5;
+            signal_mux_23 <= signal_const_7;
         30:
             signal_mux_23 <= signal_const_5;
         default:
