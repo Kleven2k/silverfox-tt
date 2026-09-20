@@ -18,8 +18,6 @@ need to account for this offset when computing baud-rate cycle counts.
 Confirmed for now, from other competitors' public repos, shared email 
 correspondence with the organizers.
 
-
-
 ## 20-09-2026 - Never use List.init for side-effecting simulation steps
 Core's List.init does not guarantee left-to-right evaluation order of ~f
 when it has side effects -- only that the returned list is in index order.
@@ -29,3 +27,12 @@ traces that took several rounds of waveform/debug-signal digging to catch.
 Fix: use an explicit `for i = 1 to n do ... done` loop with a mutable
 accumulator for any test that advances simulation and samples state per
 cycle. Applies to all future hardcaml_test_harness tests, not just this one.
+
+## 21-09-2926 - Verified IN and WAIT with real assertions (debug-output pattern)
+Followed the same debug-print-first-then-assert workflow established for
+OUT last session. IN correctly reconstructs a byte from RX bits shifted in
+MSB-first over 8 cycles (matches hand-calculated shift sequence exactly).
+WAIT correctly holds PC in place while the RX condition is false and falls
+through the cycle it becomes true. Both verified via Isa.create_debug
+before locking in [%test_eq] assertions -- no bugs found this round,
+unlike OUT's earlier List.init incident.

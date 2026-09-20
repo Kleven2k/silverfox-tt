@@ -81,3 +81,82 @@ let%test_unit "OUT shifts X out LSB-first" =
   in
   [%test_eq: int list] received_bits expected_bits
 ;;
+
+(* IN shifts a new bit into X's MSB each cycle, with old bits sliding down.
+   After 8 calls, the first-received bit ends up at X's LSB and the last-
+   received bit at X's MSB -- this reconstructs a byte sent LSB-first, per
+   isa.md. We drive ui_in with the test byte's bits, LSB first, one per
+   cycle, and check the final X value. *)
+let%test_unit "IN shifts RX bits into X, reconstructing byte LSB-first" =
+  let test_byte = 0b1011_0010 in
+  let program =
+    List.init 8 ~f:(fun _ ->
+      Isa.encode ~opcode:Isa.Opcode.in_ ~arg1:Isa.Reg_id.pin_rx ~arg2:0)
+  in
+  let final_x_reg = ref 0 in
+  Debug_harness.run_advanced
+    ~waves_config:Waves_config.no_waves
+    ~create:(fun (_scope : Scope.t) i -> Isa.create_debug ~program i)
+    (fun (sim : Debug_harness.Sim.t) ->
+      let inputs = Cyclesim.inputs sim in
+      let outputs = Cyclesim.outputs sim in
+      let cycle ?n () = Cyclesim.cycle ?n sim in
+      inputs.rst_n <--. 0;
+      inputs.ena <--. 0;
+      inputs.ui_in <--. 0;
+      inputs.uio_in <--. 0;
+      cycle ~n:2 ();
+      inputs.rst_n <--. 1;
+      inputs.ena <--. 1;
+      for k = 0 to 7 do
+        let bit = (test_byte lsr k) land 1 in
+        inputs.ui_in <--. bit;
+        cycle ();
+        final_x_reg := Bits.to_unsigned_int !(outputs.x_reg)
+      done);
+  [%test_eq: int] !final_x_reg test_byte
+;;
+
+(* WAIT should hold PC in place while RX doesn't match the target polarity,
+   then let execution fall through once it does. We hold RX low for 3
+   cycles (PC should not move), then raise RX high (PC should advance and
+   the following SET should eventually execute, loading X with 0xFF). *)
+let%test_unit "WAIT stalls PC until RX matches target, then falls through" =
+  let program =
+    [ Isa.encode ~opcode:Isa.Opcode.wait_ ~arg1:Isa.Reg_id.pin_rx ~arg2:1
+    ; Isa.encode ~opcode:Isa.Opcode.set ~arg1:Isa.Reg_id.reg_x ~arg2:0xff
+    ]
+  in
+  let pc_trace = ref [] in
+  let x_reg_trace = ref [] in
+  Debug_harness.run_advanced
+    ~waves_config:Waves_config.no_waves
+    ~create:(fun (_scope : Scope.t) i -> Isa.create_debug ~program i)
+    (fun (sim : Debug_harness.Sim.t) ->
+      let inputs = Cyclesim.inputs sim in
+      let outputs = Cyclesim.outputs sim in
+      let cycle ?n () = Cyclesim.cycle ?n sim in
+      inputs.rst_n <--. 0;
+      inputs.ena <--. 0;
+      inputs.ui_in <--. 0;
+      inputs.uio_in <--. 0;
+      cycle ~n:2 ();
+      inputs.rst_n <--. 1;
+      inputs.ena <--. 1;
+      for _ = 1 to 3 do
+        inputs.ui_in <--. 0;
+        cycle ();
+        pc_trace := Bits.to_unsigned_int !(outputs.pc) :: !pc_trace;
+        x_reg_trace := Bits.to_unsigned_int !(outputs.x_reg) :: !x_reg_trace
+      done;
+      for _ = 1 to 3 do
+        inputs.ui_in <--. 1;
+        cycle ();
+        pc_trace := Bits.to_unsigned_int !(outputs.pc) :: !pc_trace;
+        x_reg_trace := Bits.to_unsigned_int !(outputs.x_reg) :: !x_reg_trace
+      done);
+  let pc_trace = List.rev !pc_trace in
+  let x_reg_trace = List.rev !x_reg_trace in
+  [%test_eq: int list] pc_trace [ 0; 0; 0; 1; 2; 2 ];
+  [%test_eq: int list] x_reg_trace [ 0; 0; 0; 0; 255; 255 ]
+;;
