@@ -4,8 +4,8 @@
 - [x] TT-conformant pin interface (clk/rst_n/ena/ui_in/uo_out/uio_*)
 - [x] SET, JMP, HALT opcodes - decode, PC, register file
 - [x] hardcaml_test_harness unit test for SET/JMP
-- [ ] WAIT, IN, OUT, MOV opcodes
-- [ ] cocotb test suite matching Hardcaml tests
+- [x] WAIT, IN, OUT, MOV opcodes
+- [x] cocotb test suite matching Hardcaml tests
 
 ## Phase 2 - UART
 - [ ] Bit-banged UART TX program (microcode), timed via WAIT
