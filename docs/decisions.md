@@ -28,7 +28,7 @@ Fix: use an explicit `for i = 1 to n do ... done` loop with a mutable
 accumulator for any test that advances simulation and samples state per
 cycle. Applies to all future hardcaml_test_harness tests, not just this one.
 
-## 21-09-2926 - Verified IN and WAIT with real assertions (debug-output pattern)
+## 20-09-2926 - Verified IN and WAIT with real assertions (debug-output pattern)
 Followed the same debug-print-first-then-assert workflow established for
 OUT last session. IN correctly reconstructs a byte from RX bits shifted in
 MSB-first over 8 cycles (matches hand-calculated shift sequence exactly).
@@ -36,3 +36,22 @@ WAIT correctly holds PC in place while the RX condition is false and falls
 through the cycle it becomes true. Both verified via Isa.create_debug
 before locking in [%test_eq] assertions -- no bugs found this round,
 unlike OUT's earlier List.init incident.
+
+## 21-09-2026 - UART TX: fixed busy-wait loop targeting wrong instruction
+First working draft of Uart.tx_program had each bit's JMP X_NOT_ZERO
+targeting the SET X instruction (base+1) instead of its own address
+(base+2). This reset X to n every iteration instead of decrementing it,
+so the loop never exited -- the program got stuck forever on the first
+instruction (start bit held low). Caught via pc_trace showing PC pinned
+at address 1; fixed by pointing the JMP at itself. Once fixed, pc_trace
+showed a clean, uniform 7-cycle-per-block cadence across all 10 bit
+periods with zero deviation, confirming both the fix and the framing
+logic (start/8 data bits LSB-first/stop) are correct.
+
+Also note: manually eyeballing merged same-value runs in a raw per-cycle
+tx_trace is unreliable for verifying bit timing, because the one-cycle
+register latency between PC and TX (documented in isa.md) can make
+adjacent same-value bits look like they span the wrong number of cycles
+even when the underlying timing is exactly correct. Prefer sampling one
+value per known bit-block at a fixed offset (as the final UART TX test
+does) over inferring boundaries from the raw trace by hand.

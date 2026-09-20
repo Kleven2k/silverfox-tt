@@ -1,7 +1,7 @@
 (library
  (name silverfox_test)
- (libraries core hardcaml silverfox hardcaml_test_harness
-hardcaml_waveterm re)
+ (libraries core hardcaml silverfox silverfox_programs hardcaml_test_harness
+   hardcaml_waveterm re)
  (preprocess
   (pps ppx_hardcaml ppx_jane))
  (inline_tests))

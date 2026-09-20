@@ -1,0 +1,5 @@
+(library
+ (name silverfox_programs)
+ (libraries core silverfox)
+ (preprocess
+  (pps ppx_jane)))
