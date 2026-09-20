@@ -8,7 +8,7 @@
 - [x] cocotb test suite matching Hardcaml tests
 
 ## Phase 2 - UART
-- [ ] Bit-banged UART TX program (microcode), timed via WAIT
+- [x] Bit-banged UART TX program (microcode), timed via WAIT
 - [ ] Bit-banged UART RX program, timed via WAIT + COND_RX_HIGH
 - [ ] Verify aagainst a real UART (FPGA loopback or logic analyzer, if available)
 - [ ] Document as first entry in protocol-programs.md
