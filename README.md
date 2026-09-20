@@ -24,7 +24,7 @@ Silverfox is a small, reprogrammable CPU for bit-banging hardware
 protocols - UART, SPI, and I2C, with USB and Ethernet as stretch
 goals. Instead of dedicated protocol peripherals, a compact PIO-inspired
 instruction set reads pins, writes pins, counts cycles, and branches on
-pin state precisely enough to omplement real protocols in firmware.
+pin state precisely enough to implement real protocols in firmware.
 
 Built with [Hardcaml](https://github.com/janestreet/hardcaml) (OCaml) for 
 the [Jane Street protocol emulator ASIC competition](https://blog.janestreet.com/protocol-emulator-asic-competition/),
