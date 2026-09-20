@@ -1,7 +1,12 @@
+(* Command-line tool for emitting Verilog from the Hardcaml sources in
+   src/. Run with `dune exec bin/generate.exe -- <subcommand>`; each
+   subcommand generates one circuit's RTL to stdout. *)
 open! Core
 open! Hardcaml
 open! Silverfox
 
+(* Generates the placeholder counter (silverfox_core) -- kept as a
+   known-good toolchain sanity check, not part of the real submission. *)
 let generate_core_rtl () =
   let module C = Circuit.With_interface (Silverfox_core.I) (Silverfox_core.O) in
   let scope = Scope.create ~auto_label_hierarchical_ports:true () in
@@ -14,6 +19,9 @@ let generate_core_rtl () =
   print_endline (Rtl.full_hierarchy rtl_circuits |> Rope.to_string)
 ;;
 
+(* Generates the real ISA core, running [Isa.default_program], under the
+   Tiny-Tapeout-required top-level module name. This is the RTL that
+   actually gets copied into src/project.v for submission. *)
 let generate_isa_rtl () =
   let module C = Circuit.With_interface (Isa.I) (Isa.O) in
   let scope = Scope.create ~auto_label_hierarchical_ports:true () in
@@ -44,6 +52,7 @@ let isa_rtl_command =
       fun () -> generate_isa_rtl ()]
 ;;
 
+(* Entry point: `dune exec bin/generate.exe -- core` or `-- isa`. *)
 let () =
   Command_unix.run
     (Command.group ~summary:"" [ "core", core_rtl_command; "isa", isa_rtl_command ])
