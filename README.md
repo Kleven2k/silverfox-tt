@@ -1,42 +1,53 @@
 ![](../../workflows/gds/badge.svg) ![](../../workflows/docs/badge.svg) ![](../../workflows/test/badge.svg) ![](../../workflows/fpga/badge.svg)
 
-# Tiny Tapeout Verilog Project Template
+<div align="center">
+<img src="assets/silverfox.png" width="250" height="250">
 
-- [Read the documentation for project](docs/info.md)
+# Silverfox
+
+### Open Source General-Purpose Protocol Emulator ASIC
+
+![OCaml](https://img.shields.io/badge/OCaml-EC6813?logo=ocaml&logoColor=white)
+![Hardcaml](https://img.shields.io/badge/Hardcaml-RTL_generation-black)
+![Tiny Tapeout](https://img.shields.io/badge/Tiny%20Tapeout-CMOS5L-blue)
+![Python](https://img.shields.io/badge/python-3.11+-blue)
+
+</div>
+
+## What is Silverfox?
+
+Silverfox is a small, reprogrammable CPU for bit-banging hardware
+protocols - UART, SPI, and I2C, with USB and Ethernet as stretch
+goals. Instead of dedicated protocol peripherals, a compact PIO-inspired
+instruction set reads pins, writes pins, counts cycles, and branches on
+pin state precisely enough to omplement real protocols in firmware.
+
+Built with [Hardcaml](https://github.com/janestreet/hardcaml) (OCaml) for 
+the [Jane Street protocol emulator ASIC competition](https://blog.janestreet.com/protocol-emulator-asic-competition/),
+targeting Tiny Tapeout's CMOS5L shuttle.
+
+## Documentation
+
+- [Architecture](docs/architecture.md) — how the core is structured
+- [ISA reference](docs/isa.md) — the instruction set
+- [Roadmap](docs/roadmap.md) — what's built and what's next
+- [Decisions log](docs/decisions.md) — design choices and why
+
+## Development
+
+The Hardcaml/OCaml source lives in `hardcaml/`. See
+[docs/architecture.md](docs/architecture.md#toolchain) for toolchain setup.
+Generated Verilog lands in `src/project.v`, which feeds Tiny Tapeout's
+standard synthesis/GDS pipeline.
 
 ## What is Tiny Tapeout?
 
-Tiny Tapeout is an educational project that aims to make it easier and cheaper than ever to get your digital and analog designs manufactured on a real chip.
-
-To learn more and get started, visit https://tinytapeout.com.
-
-## Set up your Verilog project
-
-1. Add your Verilog files to the `src` folder.
-2. Edit the [info.yaml](info.yaml) and update information about your project, paying special attention to the `source_files` and `top_module` properties. If you are upgrading an existing Tiny Tapeout project, check out our [online info.yaml migration tool](https://tinytapeout.github.io/tt-yaml-upgrade-tool/).
-3. Edit [docs/info.md](docs/info.md) and add a description of your project.
-4. Adapt the testbench to your design. See [test/README.md](test/README.md) for more information.
-
-The GitHub action will automatically build the ASIC files using [LibreLane](https://www.zerotoasiccourse.com/terminology/librelane/).
-
-## Enable GitHub actions to build the results page
-
-- [Enabling GitHub Pages](https://tinytapeout.com/faq/#my-github-action-is-failing-on-the-pages-part)
+Tiny Tapeout is an educational project that aims to make it easier and
+cheaper than ever to get your digital and analog designs manufactured on
+a real chip. Learn more at https://tinytapeout.com.
 
 ## Resources
 
 - [FAQ](https://tinytapeout.com/faq/)
 - [Digital design lessons](https://tinytapeout.com/digital_design/)
-- [Learn how semiconductors work](https://tinytapeout.com/siliwiz/)
 - [Join the community](https://tinytapeout.com/discord)
-- [Build your design locally](https://www.tinytapeout.com/guides/local-hardening/)
-
-## What next?
-
-- [Submit your design to the next shuttle](https://app.tinytapeout.com/).
-- Edit [this README](README.md) and explain your design, how it works, and how to test it.
-- Share your project on your social network of choice:
-  - LinkedIn [#tinytapeout](https://www.linkedin.com/search/results/content/?keywords=%23tinytapeout) [@TinyTapeout](https://www.linkedin.com/company/100708654/)
-  - Mastodon [#tinytapeout](https://chaos.social/tags/tinytapeout) [@matthewvenn](https://chaos.social/@matthewvenn)
-  - X (formerly Twitter) [#tinytapeout](https://twitter.com/hashtag/tinytapeout) [@tinytapeout](https://twitter.com/tinytapeout)
-  - Bluesky [@tinytapeout.com](https://bsky.app/profile/tinytapeout.com)

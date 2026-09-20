@@ -19,7 +19,8 @@ Confirmed for now, from other competitors' public repos, shared email
 correspondence with the organizers.
 
 
-## 20-09-2026-  Never use List.init for side-effecting simulation steps
+
+## 20-09-2026 - Never use List.init for side-effecting simulation steps
 Core's List.init does not guarantee left-to-right evaluation order of ~f
 when it has side effects -- only that the returned list is in index order.
 Using it to drive `cycle ()` + sample outputs silently scrambled the
