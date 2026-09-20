@@ -9,8 +9,12 @@
 
 ![OCaml](https://img.shields.io/badge/OCaml-EC6813?logo=ocaml&logoColor=white)
 ![Hardcaml](https://img.shields.io/badge/Hardcaml-RTL_generation-black)
-![Tiny Tapeout](https://img.shields.io/badge/Tiny%20Tapeout-CMOS5L-blue)
+![Verilog](https://img.shields.io/badge/Verilog-RTL-red)
 ![Python](https://img.shields.io/badge/python-3.11+-blue)
+![cocotb](https://img.shields.io/badge/cocotb-2.0.1-orange)
+
+![Tiny Tapeout](https://img.shields.io/badge/Tiny%20Tapeout-CMOS5L-blue)
+![ASIC](https://img.shields.io/badge/ASIC-CMOS5L-lightgrey)
 
 </div>
 
