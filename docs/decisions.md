@@ -55,3 +55,24 @@ adjacent same-value bits look like they span the wrong number of cycles
 even when the underlying timing is exactly correct. Prefer sampling one
 value per known bit-block at a fixed offset (as the final UART TX test
 does) over inferring boundaries from the raw trace by hand.
+
+## 21-09-2026 - Added a second scratch register (Y) to the ISA
+Designing UART RX surfaced a real architectural gap: IN accumulates the
+received byte into X across multiple bit periods, but the delay loop
+between each bit's IN also needs a register to count down -- and X can't
+serve both roles at once without one overwriting the other. Padding each
+bit period with hundreds of individual instructions instead of a counted
+loop isn't viable either (program memory only holds 32 instructions;
+~217 cycles per bit at 25MHz/115200 baud would need far more).
+
+Fix: added Y as a second scratch register, mirroring X exactly (SET
+Reg_id.reg_y, JMP Cond.y_not_zero with the same decrement-on-taken-jump
+semantics as X_NOT_ZERO). Y is dedicated to delay-loop countdowns; X
+stays dedicated to IN/OUT byte accumulation. This mirrors the RP2040
+PIO's own X/Y register pair, for the same underlying reason -- a useful
+confirmation that the two-register design isn't arbitrary.
+
+All existing tests (SET/JMP/HALT, OUT, IN, WAIT, UART TX) pass unchanged
+after the addition, confirming Y is purely additive and doesn't disturb
+prior opcode behavior. isa.md's opcode/register tables need updating to
+reflect Y once RX is far enough along to document properly.

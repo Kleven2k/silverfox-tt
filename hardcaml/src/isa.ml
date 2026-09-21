@@ -26,8 +26,8 @@ module O = struct
   [@@deriving hardcaml]
 end
 
-(* ISA constants, mirroring core_pkg.vh. Exposed via the .mli so callers
-   (generate.ml, tests, future protocol programs) can build their own
+(* ISA opcode/condition/register constants. Exposed via the .mli so
+   callers (generate.ml, tests, protocol programs) can build their own
    instruction sequences using [encode] below rather than hand-computing
    opcode bit patterns. *)
 module Opcode = struct
@@ -40,11 +40,18 @@ module Opcode = struct
   let halt = 0b111
 end
 
+(* Extended with a second scratch register, Y: a receiver needs a
+   delay-loop countdown that runs concurrently with IN accumulating a
+   received byte in X, and one register can't do both jobs at once. Y
+   mirrors X's pattern exactly (SET, and JMP's Y_NOT_ZERO condition).
+   This mirrors the RP2040 PIO's own X/Y scratch-register design, for
+   the same reason. *)
 module Cond = struct
   let always = 0b000
   let not_tx_valid = 0b001
   let x_not_zero = 0b010
   let rx_high = 0b011
+  let y_not_zero = 0b100
 end
 
 module Reg_id = struct
@@ -52,6 +59,7 @@ module Reg_id = struct
   let pin_tx_ready = 0b001
   let reg_x = 0b010
   let pin_rx = 0b011
+  let reg_y = 0b100
 end
 
 let pc_width = 5 (* 5-bit PC -> 2^5 = 32 addressable instructions *)
@@ -122,6 +130,11 @@ let compute ~program (i : _ I.t) =
      the one-cycle latency documented in isa.md. *)
   let pc = Variable.reg spec ~width:pc_width in
   let x_reg = Variable.reg spec ~width:8 in
+  (* [y_reg]: second scratch register, dedicated to delay-loop countdowns
+     (e.g. a receiver's mid-bit-sample timing) so it doesn't collide with
+     [x_reg] when [x_reg] is simultaneously accumlating received data via
+     IN. *)
+  let y_reg = Variable.reg spec ~width:8 in
   let tx = Variable.reg spec ~width:1 in
 
   (* Instruction fetch: [mux pc.value rom_entries] is a big multiplexer
@@ -147,6 +160,7 @@ let compute ~program (i : _ I.t) =
   let is_op op = opcode ==:. op in
   let is_arg1 v = arg1 ==:. v in
   let x_is_zero = x_reg.value ==:. 0 in
+  let y_is_zero = y_reg.value ==:. 0 in
 
   let rx_bit = select i.ui_in ~high:0 ~low:0 in (* RX is wired to ui_in's bit 0 *)
   let wait_target = select arg2_imm ~high:0 ~low:0 in (* WAIT's target polarity *)
@@ -161,6 +175,7 @@ let compute ~program (i : _ I.t) =
     |: is_arg1 Cond.not_tx_valid
     |: (is_arg1 Cond.x_not_zero &: ~:x_is_zero)
     |: (is_arg1 Cond.rx_high &: rx_bit)
+    |: (is_arg1 Cond.y_not_zero &: ~:y_is_zero)
   in
 
   (* IN: shift a new bit into X from the MSB side, so that after 8 calls
@@ -184,6 +199,7 @@ let compute ~program (i : _ I.t) =
         (is_op Opcode.set)
         [ if_ (is_arg1 Reg_id.pin_tx) [ tx <-- select arg2_imm ~high:0 ~low:0 ] []
         ; if_ (is_arg1 Reg_id.reg_x) [ x_reg <-- arg2_imm ] []
+        ; if_ (is_arg1 Reg_id.reg_y) [ y_reg <-- arg2_imm ] []
         ; pc <-- pc.value +:. 1
         ]
         [ if_
@@ -191,10 +207,12 @@ let compute ~program (i : _ I.t) =
             [ if_
                 jmp_taken
                 [ pc <-- jmp_target
-                  (* X only decrements when the jump is actually taken AND
-                     the condition was X_NOT_ZERO -- mirrors RP2040 PIO's
-                     combined "decrement and branch" instruction. *)
+                  (* X/Y only decrement when the jump is actually taken AND
+                     the condition was the matching *_NOT_ZERO -- mirrors
+                     RP2040 PIO's combined "decrement and branch"
+                     instruction. *)
                 ; if_ (is_arg1 Cond.x_not_zero) [ x_reg <-- x_reg.value -:. 1 ] []
+                ; if_ (is_arg1 Cond.y_not_zero) [ y_reg <-- y_reg.value -:. 1 ] [] 
                 ]
                 [ pc <-- pc.value +:. 1 ]
             ]

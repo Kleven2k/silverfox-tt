@@ -36,6 +36,7 @@ module Cond : sig
   val not_tx_valid : int
   val x_not_zero : int
   val rx_high : int
+  val y_not_zero : int
 end
 
 module Reg_id : sig
@@ -43,6 +44,7 @@ module Reg_id : sig
   val pin_tx_ready : int
   val reg_x : int
   val pin_rx : int
+  val reg_y : int
 end
 
 val pc_width : int
