@@ -49,8 +49,12 @@ async def test_uart_tx_framing(dut):
     clock_hz = 25_000_000
     baud_rate = 115_200
     cycles_per_bit = clock_hz // baud_rate  # 217
-    n = cycles_per_bit - 1  # 216
-    cycles_per_block = n + 3  # SET TX + SET X + (n+1) JMP passes = 219
+    # Each TX bit block (SET TX; SET X; JMP loop) is designed to take
+    # exactly cycles_per_bit cycles total -- see Uart.delay_loop_n in
+    # hardcaml/src/programs/uart.ml, and decisions.md for the timing
+    # bug this fixed (the old n = cycles_per_bit - 1 formula undercounted
+    # the SET/JMP loop's own overhead).
+    cycles_per_block = cycles_per_bit
     sample_offset = 10  # comfortably inside the block, past the edge
 
     num_bits = 10  # 1 start + 8 data + 1 stop
