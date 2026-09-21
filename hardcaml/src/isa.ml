@@ -104,6 +104,7 @@ module Debug_o = struct
   type 'a t =
     { uo_out : 'a [@bits 8]
     ; x_reg : 'a [@bits 8]
+    ; y_reg : 'a [@bits 8]
     ; pc : 'a [@bits 5]
     }
   [@@deriving hardcaml]
@@ -249,16 +250,16 @@ let compute ~program (i : _ I.t) =
             ]
         ]
     ];
-  (* Return the three signals both [create] and [create_debug] need,
+  (* Return the four signals both [create] and [create_debug] need,
      tagged with a polymorphic variant purely so the tuple's meaning is
      self-documenting at each call site. *)
-  `Signals (tx.value, x_reg.value, pc.value)
+  `Signals (tx.value, x_reg.value, y_reg.value, pc.value)
 ;;
 
 (* Production interface: only exposes [uo_out]/[uio_out]/[uio_oe], matching
    what generate.ml emits as the real TT submission. *)
 let create ~program (i : _ I.t) =
-  let (`Signals (tx, _x_reg, _pc)) = compute ~program i in
+  let (`Signals (tx, _x_reg, _y_reg, _pc)) = compute ~program i in
   { O.uo_out = uresize tx ~width:8; uio_out = zero 8; uio_oe = zero 8 }
 ;;
 
@@ -267,8 +268,8 @@ let create ~program (i : _ I.t) =
    Cyclesim.outputs without inferring them from uo_out and hand-counted
    timing offsets. *)
 let create_debug ~program (i : _ I.t) : _ Debug_o.t =
-  let (`Signals (tx, x_reg, pc)) = compute ~program i in
-  { Debug_o.uo_out = uresize tx ~width:8; x_reg; pc = uresize pc ~width:5 }
+  let (`Signals (tx, x_reg, y_reg, pc)) = compute ~program i in
+  { Debug_o.uo_out = uresize tx ~width:8; x_reg; y_reg; pc = uresize pc ~width:5 }
 ;;
 
 (* Wraps [create] for use inside a larger design's hierarchy -- gives this

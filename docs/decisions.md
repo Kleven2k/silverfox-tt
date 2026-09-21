@@ -76,3 +76,49 @@ All existing tests (SET/JMP/HALT, OUT, IN, WAIT, UART TX) pass unchanged
 after the addition, confirming Y is purely additive and doesn't disturb
 prior opcode behavior. isa.md's opcode/register tables need updating to
 reflect Y once RX is far enough along to document properly.
+
+## 21-09-2026 - Found and fixed a systematic delay-loop timing bug (affected TX too)
+Implementing UART RX surfaced a real bug in the delay-loop cycle math used
+by both tx_program and rx_program: a "SET reg = n; JMP reg_not_zero ->
+self" loop takes n + 2 cycles total (1 for SET, n+1 for JMP's hold), but
+both programs were computing n as cycles_per_bit - 1, which only accounts
+for part of that overhead and ignores any instruction preceding the
+SET/JMP pair (e.g. tx_program's SET TX, rx_program's IN). The result: TX
+was actually running ~2 cycles slower per bit than its real target baud
+rate the entire time, undetected, because tx_program's own Hardcaml and
+cocotb tests only checked internal self-consistency (is the waveform
+periodic, with one high bit per period?) -- never checked against an
+independently-clocked reference. RX, by design, drives its own timing
+from IN/WAIT tracking a transmitter clocked at the *true* cycles_per_bit,
+so the accumulated per-bit drift became visible as objectively wrong
+received data by bit 5 of the test byte -- a genuine second implementation
+catching a bug the first implementation's own tests couldn't see.
+
+Fix: added a general delay_loop_n helper (target cycles, minus 2 for the
+SET/JMP pair itself, minus however many instructions precede it) used by
+both tx_program and rx_program, replacing the old ad hoc "cycles_per_bit
+- 1" everywhere. Verified via pc_trace/x_reg_trace/y_reg_trace debug
+output before locking in assertions, same disciplined approach as the
+earlier OUT bug. tx_program's existing loop-target-address bug (JMP
+pointing at SET instead of itself) had already been fixed in an earlier
+session and remained correct through this fix.
+
+Also updated uart_test.ml's TX test, which had hardcoded its own
+(also-wrong) cycles_per_block formula rather than importing the real one
+from Uart -- now computes it directly as clock_hz / baud_rate, matching
+tx_program's corrected timing exactly rather than duplicating the
+assumption.
+
+Lesson: a test that only checks a design against its own internal
+assumptions (self-consistency) cannot catch a bug in those assumptions
+themselves. Only a genuinely independent second calculation, or a real
+external timing reference, can. Worth keeping in mind for SPI/I2C and any
+other future timing-sensitive protocol work.
+
+Also spent significant time this session chasing what looked like a dune
+build-cache bug, before discovering it was simply an incomplete manual
+edit (isa.mli's Debug_o block still had 3 fields, and separately had
+accidentally been pasted with .ml struct syntax instead of .mli sig
+syntax) -- the "stale cache" theory was wrong; always re-verify the
+actual file content on disk before assuming a tooling bug, especially
+after several manual multi-file edits in a row.
