@@ -122,3 +122,43 @@ accidentally been pasted with .ml struct syntax instead of .mli sig
 syntax) -- the "stale cache" theory was wrong; always re-verify the
 actual file content on disk before assuming a tooling bug, especially
 after several manual multi-file edits in a row.
+
+## 21-09-2026 - Considered, prototyped, and deferred a per-instruction delay field
+Discussed whether the ISA reads as too close to a "smaller RP2040 PIO"
+given the competition brief's explicit "consider what you'd do
+differently." Identified that PIO bakes a 5-bit delay into every
+instruction, while our SET/JMP delay-loop pattern costs 2-3 instructions
+per wait -- directly responsible for rx_program filling all 32
+instructions of program memory with zero spare room.
+
+Prototyped a new instruction format (opcode[15:13] / arg1[12:10] /
+delay[9:5] / payload[4:0]) adding a built-in 0-31 cycle post-instruction
+hold to every opcode, implemented as a delay_counter + pending_pc
+mechanism in isa.ml. Verified it compiles and integrates cleanly with the
+existing opcode dispatch logic.
+
+Before rewriting tx_program/rx_program against it, worked out the actual
+cycle math: max per-instruction delay is 32 cycles (D+1, D up to 31).
+Real UART timing needs ~217 cycles/bit and a ~108-cycle half-bit delay --
+both far exceeding what a single instruction's delay field can cover, so
+a multi-pass loop is still required either way. The redesign would NOT
+have reduced RX's per-bit instruction count for this baud rate (still
+needs IN + SET Y + JMP, just with fewer/larger-stride loop passes) --
+correcting an earlier, overly optimistic claim made mid-discussion that
+it would free up roughly a third of RX's instructions.
+
+Decision: deferred the redesign. Reverted isa.ml/isa.mli to the working
+Y-register version via `git checkout` (uncommitted, so no working code
+was lost). The idea has real merit -- decouples delay-loop register
+width from cycle count (Y no longer needs to hold large values), gives
+free delays for anything <=32 cycles (likely relevant for SPI/I2C timing
+at different clock/baud ratios), and is a genuine, explainable divergence
+from PIO worth having in the write-up -- but doesn't solve today's actual
+problem (RX at 32/32 instructions, not currently causing any real issue)
+and isn't worth a breaking rewrite on speculation alone.
+
+Revisit if: SPI or I2C's timing genuinely needs sub-32-cycle precision
+the current loop approach can't express cleanly; a specific program
+actually runs out of instruction memory and needs the space back; or
+there's spare time near submission specifically to strengthen the
+"divergence from PIO" verification-methodology story.
