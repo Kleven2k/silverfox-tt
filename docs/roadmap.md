@@ -9,17 +9,17 @@
 
 ## Phase 2 - UART
 - [x] Bit-banged UART TX program (microcode), timed via WAIT
-- [ ] Bit-banged UART RX program, timed via WAIT + COND_RX_HIGH
-- [ ] Verify aagainst a real UART (FPGA loopback or logic analyzer, if available)
+- [x] Bit-banged UART RX program, timed via WAIT + COND_RX_HIGH
+- [ ] Verify against a real UART (FPGA loopback or logic analyzer, if available)
 - [ ] Document as first entry in protocol-programs.md
 
 ## Phase 3 - SPI
 - [ ] SPI controller program (clock generation via toggling pins in microcode)
-- [ ] Verify aagainst a known SPI peripheral or loopback
+- [ ] Verify against a known SPI peripheral or loopback
 
 ## Phase 4 - I2C
 - [ ] I2C controller program (open-drain SDA handling - may need uio_oe logic)
-- [ ] Verify aagainst a known I2C peripheral
+- [ ] Verify against a known I2C peripheral
 
 ## Phase 5 - Verification infrastructure
 - [ ] hardcaml_verify equivalence checking (golden OCaml model vs generated RTL)

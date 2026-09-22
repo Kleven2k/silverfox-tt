@@ -77,3 +77,51 @@ async def test_uart_tx_framing(dut):
     )
 
     dut._log.info("UART TX framing confirmed correct against generated Verilog")
+
+@cocotb.test()
+async def test_uart_rx_receives_byte(dut):
+    """Verify UART RX agains the real generated Verilog: drives a
+    simulated 8-N-1 UART frame (start=0, 8 data bits LSB-first, stop=1)
+    onto ui_in[0], then reads the received byte directly from the core's
+    internal X register (Hardcaml-generated net name signal_reg_1 inside
+    the silverfox_isa sub-module, confirmed by tracing its driving logic
+    -- see decisions.md) since the production pin interface does not
+    expose the received byte on any output pin. This mirrors what
+    Isa.create_debug does for the Hardcaml-side test, using cocotb's
+    hierarchical signal access instead.
+    """
+    dut._log.info("Start")
+
+    await start_clock(dut)
+    await reset(dut)
+
+    byte_to_receive = 0b1011_0010
+    clock_hz = 25_000_000
+    baud_rate = 115_200
+    cycles_per_bit = clock_hz // baud_rate
+
+    data_bits = [(byte_to_receive >> i) & 1 for i in range(8)]
+    frame = [0] + data_bits + [1]   # start, 8 data bits LSB-first, stop
+
+    # Line idles high before the frame starts.
+    dut.ui_in.value = 1
+    await ClockCycles(dut.clk, 5)
+
+    for bit in frame:
+        dut.ui_in.value = bit
+        await ClockCycles(dut.clk, cycles_per_bit)
+
+    # A little settling time after the frame ends before reading X.
+    await ClockCycles(dut.clk, 5)
+
+    x_reg_path = dut.user_project.silverfox_isa.signal_reg_1
+    received = int(x_reg_path.value)
+
+    dut._log.info(f"received = {received:#04x} (expected {byte_to_receive:#04x})")
+
+    assert received == byte_to_receive, (
+        f"UART RX mismatch: expected {byte_to_receive:#04x}, "
+        f"got {received:#04x}"
+    )
+
+    dut._log.info("UART RX byte confirmed correct against generated Verilog")

@@ -30,19 +30,22 @@ module silverfox_isa (
     wire signal_mux_3;
     wire signal_mux_4;
     wire [15:0] signal_const_5;
+    wire [15:0] signal_const_6;
     wire [15:0] signal_const_7;
     wire [15:0] signal_const_8;
     wire [15:0] signal_const_9;
     wire [15:0] signal_const_10;
-    wire [15:0] signal_const_12;
-    wire [15:0] signal_const_13;
-    wire [15:0] signal_const_16;
-    wire [15:0] signal_const_19;
-    wire [15:0] signal_const_22;
-    wire [15:0] signal_const_25;
-    wire [15:0] signal_const_28;
-    wire [15:0] signal_const_31;
+    wire [15:0] signal_const_11;
+    wire [15:0] signal_const_14;
+    wire [15:0] signal_const_17;
+    wire [15:0] signal_const_20;
+    wire [15:0] signal_const_23;
+    wire [15:0] signal_const_26;
+    wire [15:0] signal_const_29;
+    wire [15:0] signal_const_32;
     wire [15:0] signal_const_34;
+    wire [15:0] signal_const_35;
+    wire [15:0] signal_const_36;
     wire [4:0] signal_const_37;
     wire [4:0] signal_const_38;
     wire [4:0] signal_add;
@@ -150,20 +153,23 @@ module silverfox_isa (
     assign signal_mux_2 = signal_eq_16 ? signal_reg_3 : signal_mux_1;
     assign signal_mux_3 = signal_eq_17 ? signal_reg_3 : signal_mux_2;
     assign signal_mux_4 = signal_eq_18 ? signal_reg_3 : signal_mux_3;
-    assign signal_const_5 = 16'b1110000000000000;
-    assign signal_const_7 = 16'b1000100000011101;
-    assign signal_const_8 = 16'b0000100011010110;
-    assign signal_const_9 = 16'b0000000000000001;
-    assign signal_const_10 = 16'b1000100000011010;
-    assign signal_const_12 = 16'b0000000000000000;
-    assign signal_const_13 = 16'b1000100000010111;
-    assign signal_const_16 = 16'b1000100000010100;
-    assign signal_const_19 = 16'b1000100000010001;
-    assign signal_const_22 = 16'b1000100000001110;
-    assign signal_const_25 = 16'b1000100000001011;
-    assign signal_const_28 = 16'b1000100000001000;
-    assign signal_const_31 = 16'b1000100000000101;
-    assign signal_const_34 = 16'b1000100000000010;
+    assign signal_const_5 = 16'b1000000000000000;
+    assign signal_const_6 = 16'b1001000000011110;
+    assign signal_const_7 = 16'b0001000011010111;
+    assign signal_const_8 = 16'b1001000000011100;
+    assign signal_const_9 = 16'b0001000011010110;
+    assign signal_const_10 = 16'b0100110000000000;
+    assign signal_const_11 = 16'b1001000000011001;
+    assign signal_const_14 = 16'b1001000000010110;
+    assign signal_const_17 = 16'b1001000000010011;
+    assign signal_const_20 = 16'b1001000000010000;
+    assign signal_const_23 = 16'b1001000000001101;
+    assign signal_const_26 = 16'b1001000000001010;
+    assign signal_const_29 = 16'b1001000000000111;
+    assign signal_const_32 = 16'b1001000000000100;
+    assign signal_const_34 = 16'b1001000000000010;
+    assign signal_const_35 = 16'b0001000001101010;
+    assign signal_const_36 = 16'b0010110000000000;
     assign signal_const_37 = 5'b00000;
     assign signal_const_38 = 5'b00001;
     assign signal_add = signal_reg_2 + signal_const_38;
@@ -272,57 +278,57 @@ module silverfox_isa (
     always @* begin
         case (signal_reg_2)
         0:
-            signal_mux_28 <= signal_const_12;
+            signal_mux_28 <= signal_const_36;
         1:
-            signal_mux_28 <= signal_const_8;
+            signal_mux_28 <= signal_const_35;
         2:
             signal_mux_28 <= signal_const_34;
         3:
-            signal_mux_28 <= signal_const_9;
+            signal_mux_28 <= signal_const_7;
         4:
-            signal_mux_28 <= signal_const_8;
+            signal_mux_28 <= signal_const_32;
         5:
-            signal_mux_28 <= signal_const_31;
+            signal_mux_28 <= signal_const_10;
         6:
-            signal_mux_28 <= signal_const_12;
+            signal_mux_28 <= signal_const_9;
         7:
-            signal_mux_28 <= signal_const_8;
+            signal_mux_28 <= signal_const_29;
         8:
-            signal_mux_28 <= signal_const_28;
+            signal_mux_28 <= signal_const_10;
         9:
             signal_mux_28 <= signal_const_9;
         10:
-            signal_mux_28 <= signal_const_8;
+            signal_mux_28 <= signal_const_26;
         11:
-            signal_mux_28 <= signal_const_25;
+            signal_mux_28 <= signal_const_10;
         12:
-            signal_mux_28 <= signal_const_12;
+            signal_mux_28 <= signal_const_9;
         13:
-            signal_mux_28 <= signal_const_8;
+            signal_mux_28 <= signal_const_23;
         14:
-            signal_mux_28 <= signal_const_22;
+            signal_mux_28 <= signal_const_10;
         15:
             signal_mux_28 <= signal_const_9;
         16:
-            signal_mux_28 <= signal_const_8;
+            signal_mux_28 <= signal_const_20;
         17:
-            signal_mux_28 <= signal_const_19;
+            signal_mux_28 <= signal_const_10;
         18:
-            signal_mux_28 <= signal_const_12;
+            signal_mux_28 <= signal_const_9;
         19:
-            signal_mux_28 <= signal_const_8;
+            signal_mux_28 <= signal_const_17;
         20:
-            signal_mux_28 <= signal_const_16;
+            signal_mux_28 <= signal_const_10;
         21:
             signal_mux_28 <= signal_const_9;
         22:
-            signal_mux_28 <= signal_const_8;
+            signal_mux_28 <= signal_const_14;
         23:
-            signal_mux_28 <= signal_const_13;
+            signal_mux_28 <= signal_const_10;
         24:
-            signal_mux_28 <= signal_const_12;
+            signal_mux_28 <= signal_const_9;
         25:
-            signal_mux_28 <= signal_const_8;
+            signal_mux_28 <= signal_const_11;
         26:
             signal_mux_28 <= signal_const_10;
         27:
@@ -332,7 +338,7 @@ module silverfox_isa (
         29:
             signal_mux_28 <= signal_const_7;
         30:
-            signal_mux_28 <= signal_const_5;
+            signal_mux_28 <= signal_const_6;
         default:
             signal_mux_28 <= signal_const_5;
         endcase
