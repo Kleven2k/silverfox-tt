@@ -72,3 +72,13 @@ module Debug_o : sig
 end
 
 val create_debug : program:int list -> Signal.t I.t -> Signal.t Debug_o.t
+
+(* Shared executor. Restart takes priority over enable; reset takes priority
+   over both. [reset_tx] is the one-bit TX reset/restart value. *)
+val execute
+  :  fetch:(Signal.t -> Signal.t)
+  -> enable:Signal.t
+  -> restart:Signal.t
+  -> reset_tx:Signal.t
+  -> Signal.t I.t
+  -> Signal.t Debug_o.t

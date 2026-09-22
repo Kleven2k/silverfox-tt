@@ -143,11 +143,30 @@ test generation):
   the ground-truth check on what actually gets fabricated.
 
 ## Known constraints and open questions
-- Program memory is fixed at 32 instructions and implemented as a
-  combinational mux-based ROM - not yet reprogrammable at runtime, and
-  not yet evaluated for area efficiency against SRAM (see the
-  competition brief's note that SRAM can be more area-efficient than
-  flip-flops for instruction memory).
+
+[Host interface](host-interface.md) describes the runtime-programming work.
+`Program_memory` and `Programmable_core` implement writable instruction
+memory, halt/restart control, and state readback through internal
+synchronous ports, tested in `hardcaml/test/programmable_core_test.ml`.
+Both the existing ROM demos and the new core use the shared `Isa.execute`
+decoder.
+
+`Host_bridge` (`hardcaml/src/host_bridge.ml`) is now the TT top level
+generated into `src/project.v`: a crude, pin-driven loader (a byte-wide bus
+on `uio`, advanced by a strobe on `ui_in[1]`) standing in for the SPI
+transport `host-interface.md` describes, until that's built. No protocol
+program is baked into silicon anymore -- the fabricated chip boots idle and
+a program is loaded, restarted, and read back entirely through pins, closing
+the competition brief's core reprogrammability requirement. Verified at the
+Hardcaml level (`hardcaml/test/host_bridge_test.ml`) and against the
+generated Verilog via cocotb/Icarus (`test/test.py`); gate-level (post-
+synthesis) verification has not yet been run against this design.
+
+- Program memory is fixed at 32 instructions and implemented as
+  register-based writable memory with combinational read - not yet
+  evaluated for area efficiency against SRAM (see the competition
+  brief's note that SRAM can be more area-efficient than flip-flops
+  for instruction memory).
 - One-cycle register latency exists between instruction execution and
   visible pin output — see `isa.md`'s timing note.
 - Tile budget is 6x4 (24 tiles, roughly 24K logic cells per the 

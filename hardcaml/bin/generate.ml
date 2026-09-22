@@ -73,6 +73,22 @@ let generate_uart_rx_rtl () =
   print_endline (Rtl.full_hierarchy rtl_circuits |> Rope.to_string)
 ;;
 
+(* Generates the reprogrammable core behind the crude pin-driven host
+   loader (Host_bridge) -- this is what makes the fabricated chip
+   actually reprogrammable after tapeout, per the competition brief.
+   No program is baked in; the host loads one at runtime through pins. *)
+let generate_host_bridge_rtl () =
+  let module C = Circuit.With_interface (Host_bridge.I) (Host_bridge.O) in
+  let scope = Scope.create ~auto_label_hierarchical_ports:true () in
+  let circuit =
+    C.create_exn ~name:"tt_um_silverfox_kleven2k" (Host_bridge.hierarchical scope)
+  in
+  let rtl_circuits =
+    Rtl.create ~database:(Scope.circuit_database scope) Verilog [ circuit ]
+  in
+  print_endline (Rtl.full_hierarchy rtl_circuits |> Rope.to_string)
+;;
+
 let core_rtl_command =
   Command.basic
     ~summary:""
@@ -104,6 +120,13 @@ let uart_rx_rtl_command =
       let () = return () in
       fun () -> generate_uart_rx_rtl ()]
 
+let host_bridge_command =
+  Command.basic
+    ~summary:""
+    [%map_open.Command
+      let () = return () in
+      fun () -> generate_host_bridge_rtl ()]
+
 (* Entry point: `dune exec bin/generate.exe -- core|isa|uart-tx`. *)
 let () =
   Command_unix.run
@@ -113,5 +136,6 @@ let () =
        ; "isa", isa_rtl_command
        ; "uart-tx", uart_tx_rtl_command 
        ; "uart-rx", uart_rx_rtl_command
+       ; "host-bridge", host_bridge_command
        ])
 ;;

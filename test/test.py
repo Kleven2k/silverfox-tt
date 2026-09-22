@@ -1,127 +1,190 @@
 # SPDX-FileCopyrightText: © 2026 Fredrik
 # SPDX-License-Identifier: Apache-2.0
 
+# project.v now generates Host_bridge (hardcaml/src/host_bridge.ml), the
+# pin-driven host loader wrapping Programmable_core -- no protocol program
+# is baked into silicon anymore. These tests replace the old fixed-UART
+# tests (which asserted TX/RX behavior that no longer exists at reset) with
+# the load-a-program-through-pins-and-read-it-back scenario the
+# competition brief actually requires. A protocol program (e.g. UART RX,
+# via Silverfox_programs.Uart.rx_program) is now something loaded at
+# runtime through this byte protocol, not something fixed in the RTL --
+# see docs/host-interface.md and test_host_bridge/ for the isolated
+# Hardcaml-level and RTL-level development history of this interface.
+
 import cocotb
 from cocotb.clock import Clock
-from cocotb.triggers import ClockCycles
+from cocotb.triggers import ClockCycles, ReadOnly, NextTimeStep
 
-# --- Helpers ---
+# Command / State_sel constants, matching hardcaml/src/host_bridge.ml
+CMD_HALT = 0x01
+CMD_RESTART = 0x02
+CMD_WRITE_INSTR = 0x10
+CMD_READ_INSTR = 0x11
+CMD_READ_STATE = 0x20
+
+SEL_PC = 0
+SEL_X = 1
+SEL_Y = 2
+SEL_TX = 3
+
+# ISA opcode/reg encodings, matching hardcaml/src/isa.ml
+OP_SET = 0b000
+OP_HALT = 0b111
+
+
+def encode(opcode, arg1, arg2):
+    return ((opcode & 0x7) << 13) | ((arg1 & 0x7) << 10) | (arg2 & 0x3FF)
+
+
+REG_X = 0b010
+REG_Y = 0b100
+REG_TX = 0b000
+HALT_INSTR = encode(OP_HALT, 0, 0)
+
+
+async def start_clock(dut):
+    cocotb.start_soon(Clock(dut.clk, 40, unit="ns").start())  # 25 MHz
+
+
 async def reset(dut):
     dut._log.info("Reset")
     dut.ena.value = 1
-    dut.ui_in.value = 0
+    dut.ui_in.value = 1  # RX idles high; BYTE_STROBE (bit 1) idles low
     dut.uio_in.value = 0
     dut.rst_n.value = 0
     await ClockCycles(dut.clk, 10)
     dut.rst_n.value = 1
+    await ClockCycles(dut.clk, 2)
 
 
-async def start_clock(dut):
-    """Set the clock period to 10 ns (100 MHz simulated clock).
-    Note: this is the *simulation* clock speed cocotb drives the DUT
-    with -- unrelated to the 25 MHz clock_hz baked into the UART TX
-    program's own bit-timing math (cycles_per_bit was computed against
-    25 MHz at generation time, so the design's *behavior* -- how many
-    clock edges per bit -- is fixed regardless of how fast we simulate
-    those edges)."""
-    cocotb.start_soon(Clock(dut.clk, 10, unit="ns").start())
+def set_byte_strobe(dut, strobe, rx=1):
+    dut.ui_in.value = (rx & 1) | ((strobe & 1) << 1)
+
+
+async def send_byte(dut, byte):
+    """Presents one byte on uio_in and pulses BYTE_STROBE (ui_in[1]) for
+    one cycle, exactly mirroring what a real host would do driving pins.
+
+    Icarus resolves ClockCycles in Verilog's "active" region, before that
+    edge's nonblocking (<=) assignments have settled -- so a value read
+    immediately after ClockCycles is one cycle stale (this differs from
+    Hardcaml's Cyclesim.cycle, which settles before returning; see
+    cocotb/cocotb discussion #3877). Awaiting ReadOnly() after the edge
+    moves us past that settle point before returning to the caller, so
+    every value this coroutine hands back is this edge's real result.
+    ReadOnly forbids writes for the rest of this timestep, so dropping
+    the strobe is deferred to NextTimeStep rather than done immediately. """
+    dut.uio_in.value = byte & 0xFF
+    set_byte_strobe(dut, 1)
+    await ClockCycles(dut.clk, 1)
+    await ReadOnly()
+    await NextTimeStep()
+    set_byte_strobe(dut, 0)
+
+
+async def read_response(dut):
+    """byte_index has already advanced to 4 by the end of the committing
+    byte's strobe cycle, so the high response byte is on uio_out
+    immediately -- see hardcaml/test/host_bridge_test.ml for the same
+    reasoning against the Hardcaml-level model."""
+    assert int(dut.uio_oe.value) == 0xFF, "uio_oe should drive during response byte 4"
+    hi = int(dut.uio_out.value)
+    await send_byte(dut, 0)
+    assert int(dut.uio_oe.value) == 0xFF, "uio_oe should drive during response byte 5"
+    lo = int(dut.uio_out.value)
+    await send_byte(dut, 0)
+    return (hi << 8) | lo
+
+
+async def send_command(dut, command, address, data=0):
+    await send_byte(dut, command)
+    await send_byte(dut, address)
+    await send_byte(dut, (data >> 8) & 0xFF)
+    await send_byte(dut, data & 0xFF)
+
+
+async def write_instr(dut, address, data):
+    await send_command(dut, CMD_WRITE_INSTR, address, data)
+    await read_response(dut)
+
+
+async def read_instr(dut, address):
+    await send_command(dut, CMD_READ_INSTR, address)
+    return await read_response(dut)
+
+
+async def read_state(dut, selector):
+    await send_command(dut, CMD_READ_STATE, selector)
+    return await read_response(dut)
+
+
+async def restart(dut):
+    await send_command(dut, CMD_RESTART, 0)
+    await read_response(dut)
 
 
 @cocotb.test()
-async def test_uart_tx_framing(dut):
-    """Verify UART TX (0x55, 8-N-1) against the real generated Verilog,
-    at the actual target timing (25 MHz clock, 115200 baud ->
-    cycles_per_bit = 217). Mirrors the Hardcaml-side uart_test.ml
-    assertion, but runs against src/project.v via Icarus Verilog, per
-    Tiny Tapeout's required test flow.
-
-    Samples one value per bit-block at a fixed offset (well clear of
-    the block's edges), rather than inferring bit boundaries from
-    merged runs in a raw per-cycle trace -- see decisions.md for why
-    that approach proved unreliable during Hardcaml-side development.
-    """
-    dut._log.info("Start")
-
+async def test_uio_releases_bus_outside_response_bytes(dut):
+    """uio must stay an input (uio_oe == 0) while the host is driving
+    command/address/data bytes, only switching to output for the two
+    response bytes -- this is what lets a real host share the bus without
+    contention, and is exactly the framing invariant host_bridge_test.ml
+    checks at the Hardcaml level."""
     await start_clock(dut)
     await reset(dut)
 
-    byte_sent = 0x55
-    clock_hz = 25_000_000
-    baud_rate = 115_200
-    cycles_per_bit = clock_hz // baud_rate  # 217
-    # Each TX bit block (SET TX; SET X; JMP loop) is designed to take
-    # exactly cycles_per_bit cycles total -- see Uart.delay_loop_n in
-    # hardcaml/src/programs/uart.ml, and decisions.md for the timing
-    # bug this fixed (the old n = cycles_per_bit - 1 formula undercounted
-    # the SET/JMP loop's own overhead).
-    cycles_per_block = cycles_per_bit
-    sample_offset = 10  # comfortably inside the block, past the edge
+    dut.uio_in.value = CMD_READ_STATE
+    set_byte_strobe(dut, 1)
+    await ClockCycles(dut.clk, 1)
+    await ReadOnly()
+    assert int(dut.uio_oe.value) == 0
+    await NextTimeStep()
+    set_byte_strobe(dut, 0)
 
-    num_bits = 10  # 1 start + 8 data + 1 stop
+    dut.uio_in.value = SEL_PC
+    set_byte_strobe(dut, 1)
+    await ClockCycles(dut.clk, 1)
+    await ReadOnly()
+    assert int(dut.uio_oe.value) == 0
+    await NextTimeStep()
+    set_byte_strobe(dut, 0)
 
-    sampled_bits = []
-    for _bit_index in range(num_bits):
-        for cycle_in_block in range(1, cycles_per_block + 1):
-            await ClockCycles(dut.clk, 1)
-            if cycle_in_block == sample_offset:
-                sampled_bits.append(int(dut.uo_out.value) & 1)
-
-    dut._log.info(f"sampled_bits = {sampled_bits}")
-
-    data_bits = [(byte_sent >> i) & 1 for i in range(8)]
-    expected_bits = [0] + data_bits + [1]
-
-    assert sampled_bits == expected_bits, (
-        f"UART TX framing mismatch: expected {expected_bits}, "
-        f"got {sampled_bits}"
-    )
-
-    dut._log.info("UART TX framing confirmed correct against generated Verilog")
 
 @cocotb.test()
-async def test_uart_rx_receives_byte(dut):
-    """Verify UART RX agains the real generated Verilog: drives a
-    simulated 8-N-1 UART frame (start=0, 8 data bits LSB-first, stop=1)
-    onto ui_in[0], then reads the received byte directly from the core's
-    internal X register (Hardcaml-generated net name signal_reg_1 inside
-    the silverfox_isa sub-module, confirmed by tracing its driving logic
-    -- see decisions.md) since the production pin interface does not
-    expose the received byte on any output pin. This mirrors what
-    Isa.create_debug does for the Hardcaml-side test, using cocotb's
-    hierarchical signal access instead.
-    """
-    dut._log.info("Start")
-
+async def test_load_program_restart_and_read_state_back(dut):
+    """Loads a small program through real pins via WRITE_INSTR, reads it
+    back via READ_INSTR to confirm no RTL/toolchain gap silently drops
+    writes, restarts it, and reads PC/X/Y/TX back via READ_STATE -- the
+    same end-to-end scenario host_bridge_test.ml proves in Hardcaml, now
+    against the actual generated Verilog under Icarus. This is the
+    end-to-end proof the competition brief asks for: reprogramming the
+    chip through pins with no RTL regeneration in between."""
     await start_clock(dut)
     await reset(dut)
 
-    byte_to_receive = 0b1011_0010
-    clock_hz = 25_000_000
-    baud_rate = 115_200
-    cycles_per_bit = clock_hz // baud_rate
+    program = [
+        encode(OP_SET, REG_X, 42),
+        encode(OP_SET, REG_Y, 7),
+        encode(OP_SET, REG_TX, 0),
+        HALT_INSTR,
+    ]
 
-    data_bits = [(byte_to_receive >> i) & 1 for i in range(8)]
-    frame = [0] + data_bits + [1]   # start, 8 data bits LSB-first, stop
+    for address, data in enumerate(program):
+        await write_instr(dut, address, data)
 
-    # Line idles high before the frame starts.
-    dut.ui_in.value = 1
-    await ClockCycles(dut.clk, 5)
+    for address, data in enumerate(program):
+        readback = await read_instr(dut, address)
+        assert readback == data, f"address {address}: expected {data:#06x}, got {readback:#06x}"
 
-    for bit in frame:
-        dut.ui_in.value = bit
-        await ClockCycles(dut.clk, cycles_per_bit)
+    await restart(dut)
 
-    # A little settling time after the frame ends before reading X.
-    await ClockCycles(dut.clk, 5)
+    pc = await read_state(dut, SEL_PC)
+    x = await read_state(dut, SEL_X)
+    y = await read_state(dut, SEL_Y)
+    tx = await read_state(dut, SEL_TX)
 
-    x_reg_path = dut.user_project.silverfox_isa.signal_reg_1
-    received = int(x_reg_path.value)
-
-    dut._log.info(f"received = {received:#04x} (expected {byte_to_receive:#04x})")
-
-    assert received == byte_to_receive, (
-        f"UART RX mismatch: expected {byte_to_receive:#04x}, "
-        f"got {received:#04x}"
-    )
-
-    dut._log.info("UART RX byte confirmed correct against generated Verilog")
+    assert pc == 3, f"expected PC halted at address 3, got {pc}"
+    assert x == 42, f"expected X == 42, got {x}"
+    assert y == 7, f"expected Y == 7, got {y}"
+    assert tx == 0, f"expected TX == 0, got {tx}"

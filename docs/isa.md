@@ -29,7 +29,7 @@ Instructions are 16 bit wide:
 Program memory currently holds 32 instructions (5-bit program counter).
 This is a starting size, not a hard architectural limit - see
 `decisions.md` for the reasoning and revisit criteria. The current UART
-RX program uses all 32 instructions exactly, with no spare room.
+RX program uses all 30 instructions exactly, with no spare room.
 
 ## Opcodes
 

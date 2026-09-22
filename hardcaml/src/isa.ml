@@ -110,16 +110,10 @@ module Debug_o = struct
   [@@deriving hardcaml]
 end
 
-(* [compute] builds the actual circuit logic once and returns every signal
-   both the production [create] and the test-only [create_debug] need --
-   this avoids duplicating the whole decode/execute block between the two.
-   Everything below describes *hardware*, not a sequence of steps that
-   "run": all these signals exist and update simultaneously, every clock
-   cycle, the way real logic gates do. *)
-let compute ~program (i : _ I.t) =
-  let rom_entries =
-    List.map (pad_program program) ~f:(fun v -> of_int_trunc ~width:16 v)
-  in
+(* Shared execution logic for the existing ROM demos and the programmable
+   core. [fetch] connects a PC signal to instruction storage; it builds
+   hardware once, rather than performing a software read every cycle. *)
+let execute ~fetch ~enable ~restart ~reset_tx (i : _ I.t) : _ Debug_o.t =
   (* [Reg_spec] bundles together the clock and reset signal that every
      register in this circuit will share. [~:(i.rst_n)] inverts rst_n,
      since it's active-low but Hardcaml's [~clear] expects active-high. *)
@@ -136,13 +130,11 @@ let compute ~program (i : _ I.t) =
      [x_reg] when [x_reg] is simultaneously accumlating received data via
      IN. *)
   let y_reg = Variable.reg spec ~width:8 in
-  let tx = Variable.reg spec ~width:1 in
+  let tx = Variable.reg spec ~width:1 ~clear_to:reset_tx in
 
-  (* Instruction fetch: [mux pc.value rom_entries] is a big multiplexer
-     that selects one of the ROM entries based on the current PC value --
-     a purely combinational read, so [instr] reflects the instruction at
-     whatever PC currently holds. *)
-  let instr = mux pc.value rom_entries in
+  (* Both ROM and writable-memory callers provide a combinational read
+     at the current PC, preserving one-instruction-per-cycle execution. *)
+  let instr = fetch pc.value in
 
   (* Field decode: [select signal ~high ~low] pulls out a sub-range of
      bits, same as Verilog's [signal[high:low]]. *)
@@ -195,7 +187,7 @@ let compute ~program (i : _ I.t) =
      Hardcaml's if/else -- there's no built-in elif, so we nest [if_] as
      the sole item of an else-branch to build a chain, checking each
      opcode in turn. *)
-  compile
+  let execute_instruction =
     [ if_
         (is_op Opcode.set)
         [ if_ (is_arg1 Reg_id.pin_tx) [ tx <-- select arg2_imm ~high:0 ~low:0 ] []
@@ -249,18 +241,38 @@ let compute ~program (i : _ I.t) =
                 ]
             ]
         ]
+    ]
+  in
+  compile
+    [ if_ restart
+        [ pc <-- zero pc_width
+        ; x_reg <-- zero 8
+        ; y_reg <-- zero 8
+        ; tx <-- reset_tx
+        ]
+        [ if_ enable execute_instruction [] ]
     ];
-  (* Return the four signals both [create] and [create_debug] need,
-     tagged with a polymorphic variant purely so the tuple's meaning is
-     self-documenting at each call site. *)
-  `Signals (tx.value, x_reg.value, y_reg.value, pc.value)
+  { Debug_o.uo_out = uresize tx.value ~width:8
+  ; x_reg = x_reg.value
+  ; y_reg = y_reg.value
+  ; pc = pc.value
+  }
+;;
+
+(* Preserve the existing ROM demos while the host transport is developed. *)
+let compute ~program (i : _ I.t) =
+  let rom_entries =
+    List.map (pad_program program) ~f:(fun v -> of_int_trunc ~width:16 v)
+  in
+  execute ~fetch:(fun pc -> mux pc rom_entries)
+    ~enable:vdd ~restart:gnd ~reset_tx:(zero 1) i
 ;;
 
 (* Production interface: only exposes [uo_out]/[uio_out]/[uio_oe], matching
    what generate.ml emits as the real TT submission. *)
 let create ~program (i : _ I.t) =
-  let (`Signals (tx, _x_reg, _y_reg, _pc)) = compute ~program i in
-  { O.uo_out = uresize tx ~width:8; uio_out = zero 8; uio_oe = zero 8 }
+  let state = compute ~program i in
+  { O.uo_out = state.uo_out; uio_out = zero 8; uio_oe = zero 8 }
 ;;
 
 (* Test-only variant: same logic as [create], but also exposes [x_reg] and
@@ -268,8 +280,7 @@ let create ~program (i : _ I.t) =
    Cyclesim.outputs without inferring them from uo_out and hand-counted
    timing offsets. *)
 let create_debug ~program (i : _ I.t) : _ Debug_o.t =
-  let (`Signals (tx, x_reg, y_reg, pc)) = compute ~program i in
-  { Debug_o.uo_out = uresize tx ~width:8; x_reg; y_reg; pc = uresize pc ~width:5 }
+  compute ~program i
 ;;
 
 (* Wraps [create] for use inside a larger design's hierarchy -- gives this
