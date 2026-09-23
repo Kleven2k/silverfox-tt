@@ -27,14 +27,14 @@ pinout:
   ui[1]: ""
   ui[2]: ""
   ui[3]: ""
-  ui[4]: ""
-  ui[5]: ""
-  ui[6]: ""
+  ui[4]: "HOST_CS_N"
+  ui[5]: "HOST_SCLK"
+  ui[6]: "HOST_MOSI"
   ui[7]: ""
 
   # Outputs
   uo[0]: "TX"
-  uo[1]: ""
+  uo[1]: "HOST_MISO"
   uo[2]: ""
   uo[3]: ""
   uo[4]: ""

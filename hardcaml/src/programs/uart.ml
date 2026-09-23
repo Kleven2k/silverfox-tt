@@ -59,7 +59,7 @@ let tx_program ~clock_hz ~baud_rate ~byte =
    Y is used for all delay-loop timing (separately from X, which IN uses
    to accumulate the byte).
 
-   This program's instruction layout is fixed at exactly 32 instructions
+   This program's instruction layout is fixed at exactly 30 instructions
    (the full instruction memory, with no spare room), so there's no space
    left in this version for an explicit stop-bit framing check; the
    receiver simply waits out the stop bit's duration and loops back to
@@ -95,10 +95,9 @@ let rx_program ~clock_hz ~baud_rate =
       [ Isa.encode ~opcode:Isa.Opcode.in_ ~arg1:Isa.Reg_id.pin_rx ~arg2:0 ]
       @ delay_block ~base:(in_addr + 1) ~delay_n:n_full_after_in)
   in
-  (* Addresses 29-30: wait out the stop bit's duration (no framing check
-     in this version). *)
-  let stop_bit_delay = delay_block ~base:29 ~delay_n:n_full in
-  (* Address 31: loop back to address 0 for the next byte. *)
+  (* Address 29: the delay after the final IN already reaches the stop
+     bit's midpoint. Rearm now; another full-bit delay would miss the
+     start edge of a back-to-back frame. *)
   let loop_back = [ Isa.encode ~opcode:Isa.Opcode.jmp ~arg1:Isa.Cond.always ~arg2:0 ] in
-  wait_start_bit @ half_bit_delay @ settle_to_bit0 @ data_bits @ stop_bit_delay @ loop_back
+  wait_start_bit @ half_bit_delay @ settle_to_bit0 @ data_bits @ loop_back
 ;;
