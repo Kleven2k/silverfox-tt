@@ -162,3 +162,158 @@ the current loop approach can't express cleanly; a specific program
 actually runs out of instruction memory and needs the space back; or
 there's spare time near submission specifically to strengthen the
 "divergence from PIO" verification-methodology story.
+
+## 22-09-2026 - Found a serious gap: the chip was never actually reprogrammable
+A self-review re-reading the competition brief's actual wording caught
+something bigger than the ISA-divergence discussion above: "Your chip
+should be reprogrammable enough to support new protocols after
+fabrication." Isa.hierarchical ~program takes a plain OCaml list and bakes
+it into a fixed hardware mux at synthesis time -- there was no way to
+change what program runs after the chip is fabricated. What existed was a
+chip that could be *fabricated differently* per protocol, not a chip that
+could be *reprogrammed* after fabrication -- a materially weaker claim than
+the brief asks for, and arguably the single biggest gap in the project at
+the time, since it wasn't "what would we do differently" but "the stated
+requirement isn't met at all yet."
+
+Fix, built out over the following days: `Program_memory` (writable,
+register-based instruction memory, combinational read, reset-to-HALT) and
+`Programmable_core` (wraps it with halt/restart/write_enable/address/
+state-readback control, all internal synchronous ports) let a host stop the
+core, load or read back instructions, and restart it, without RTL
+regeneration. Both reuse `Isa.execute`, the same decoder the original ROM
+demos use, refactored out of the old `compute` function so the writable
+path and the fixed-ROM path share one implementation rather than diverging.
+Verified via `hardcaml/test/programmable_core_test.ml` and
+`program_memory_test.ml`: two different programs loaded into one core with
+a restart between them (proving the memory survives restart and a shorter
+second program's stale tail doesn't get executed), write rejection while
+running, HALT interrupting a stalled WAIT, and disable/reset behavior.
+
+This alone was not enough to close the gap: `Programmable_core`'s ports
+(explicit halt/restart/address/write_data signals, debug state outputs)
+don't match Tiny Tapeout's required top-level pin interface, so it could
+not become `src/project.v`'s top module directly. `Host_bridge` closes that
+last step -- a crude, byte-wide bus on `uio` advanced by a strobe on
+ui_in[1], standing in for the real SPI transport in host-interface.md,
+but real enough that it IS the generated `tt_um_silverfox_kleven2k` top
+level: no protocol program is baked into silicon anymore, and a program can
+be loaded, restarted, and read back entirely through real pins. Verified at
+the Hardcaml level (`host_bridge_test.ml`) and against the generated
+Verilog via cocotb/Icarus (`test/test.py`), then confirmed through a full
+gds/precheck/gl_test pass in CI (see the ihp-sg13cmos5l entry below for
+what that pass actually needed).
+
+Remaining, tracked in roadmap.md: replace Host_bridge's crude byte protocol
+with the real SPI decoder (CS/SCLK/MOSI synchronization, edge detection,
+the full command/result-code framing) described in host-interface.md --
+in progress as `Spi_bridge`, not yet complete or promoted into project.v.
+
+## 23-09-2026 - Repo was on a stale PDK target (ihp-sg13g2); switched to ihp-sg13cmos5l
+The competition blog's template link now points at ttihp-verilog-template's
+cmos5l branch, which targets pdk: ihp-sg13cmos5l with tt-gds-action@ihp-cmos5l
+-- this repo (generated earlier, from whatever the link resolved to at the
+time) was still on ihp-sg13g2 / @ttihp26b throughout .github/workflows/*,
+test/Makefile, and info.yaml. Neither name is obviously wrong on its own
+(ttihp26b is a real, current TT shuttle tag; ihp-sg13g2 is a real PDK), so
+the mismatch went unnoticed until actually diffing this repo against the
+current template.
+
+Confirming this took real effort: an AI web-search/fetch tool returned
+plausible-looking but factually wrong file contents for a third party's repo
+*twice* in the same investigation, momentarily pointing the conclusion the
+wrong way (toward "no change needed"). Only pasting the actual file contents
+directly, copied by hand from the browser, resolved it -- for a decision
+with real fabrication consequences, treat any AI-fetched web content as
+unverified until confirmed by directly reading the source yourself.
+
+Fixed by matching the current template exactly, file by file:
+- .github/workflows/{gds,docs,fpga}.yaml: pdk: ihp-sg13cmos5l, tag @ihp-cmos5l
+- test/Makefile (GATES=yes): sg13cmos5l_io.v / sg13cmos5l_stdcell.v paths
+- .devcontainer/Dockerfile: left as PDK=ihp-sg13g2 -- matches the template
+  exactly (checked directly), so this is a real, current asymmetry between
+  local devcontainer setup and CI, not a leftover to "fix"
+
+This surfaced two further real, PDK-specific gaps once gl_test/precheck
+actually ran against ihp-sg13cmos5l:
+
+1. gl_test: "Unknown module type: ihp_mux2 / ihp_dff_r". sg13cmos5l_stdcell.v
+   instantiates these as Verilog UDPs defined in a separate file
+   (sg13cmos5l_udp.v) that test/Makefile's GATES=yes block didn't include --
+   same class of gap the ihp-sg13g2 PDK had (sg13g2_udp.v), independently
+   confirmed by another competition entrant hitting the identical issue.
+   Fix: add the PDK's *_udp.v file to VERILOG_SOURCES, ahead of *_stdcell.v.
+
+2. precheck (pin check): "Port VGND/VDPWR has too small width: 1.0 < 2.1 um".
+   src/config.json's FP_PDN_VPITCH (38.87, tuned for ihp-sg13g2) had no
+   FP_PDN_VWIDTH override, so LibreLane generated 1.0um PDN rails against
+   this PDK's 2.1um minimum rail width. Fix: FP_PDN_VPITCH 50.0,
+   FP_PDN_VWIDTH 2.1, matching the current template exactly.
+
+Lesson: when a competition/toolchain template updates out from under an
+existing repo, a wholesale diff against the current template (workflows,
+Makefile, config.json, Dockerfile) catches PDK-coupled settings that don't
+announce themselves as wrong -- each one only surfaced as a distinct CI
+failure, one gate at a time (gds -> precheck -> gl_test), rather than all at
+once.
+
+## 15-10-2026 - Restarted the ISA from scratch (v0.3), rewriting the code by hand
+The working design on `main` (Host_bridge + Programmable_core, green on
+gds/precheck/gl_test for ihp-sg13cmos5l) stays untouched as a fallback. The
+restart happens on the `isa-v0.3` branch, with the old code moved to
+`deprecated/` as reference.
+
+Why restart rather than patch:
+- Delay loops dominated programs: UART RX used 30 of 32 instruction words,
+  mostly SET+JMP countdown loops, because the ISA had no direct way to wait
+  a number of cycles.
+- Loop timing was fragile and easy to get wrong silently (the delay_loop_n
+  off-by-two above), since every bit period was hand-assembled from
+  instruction costs.
+- Loop counting shared registers with data: X/Y had to double as counters.
+- Opcode definitions, field positions and execution were tangled together in
+  one isa.ml, with bit positions written separately in encode and in the
+  RTL's select calls.
+
+What v0.3 changes (spec in docs/isa.md; it went through v0.1 -> v0.3, each
+version reviewed against real protocol programs before the next):
+- DELAY instruction: exact 1..8192 cycles in one instruction (encoded as
+  cycles - 1), replacing countdown loops.
+- Dedicated 8-bit loop counter C, so X/Y stay free for data; JMP C_NZ_DEC
+  runs a loop body exactly n times and does not underflow at 0.
+- JMP can branch on a pin level (UART stop bit, I2C ACK/NACK).
+- OUT gets a bank select (UIO/UO) and an open-drain mode for I2C.
+- Program memory 64 words (6-bit PC), still flip-flops.
+- HALT is SYS 000 = 0xE000 on purpose: program memory resets to that value,
+  so empty memory halts instead of sliding through NOPs.
+- Rejected on purpose: a general ALU, memory instructions and interrupts.
+  Each would cost area and verification effort and weaken cycle
+  determinism, and none is needed by UART/SPI/I2C.
+
+Code structure (hardcaml/lib/isa/isa.ml): one module per instruction, each
+with its type, encode, decode and a list of every legal instance. Field
+positions are defined once in a Field module shared by encode, decode and
+(later) the RTL decoder. Bit codes are explicit to_bits/of_bits tables
+rather than derived from constructor order, because the encoding has gaps
+and per-instruction codes (e.g. the same GPIO registers are 011-101 in SET
+but 101-111 in MOV). Instruction types are shaped so illegal instructions
+cannot be constructed (no SET_BITS on X, no open-drain on UO, no MOV into an
+input bank); numeric ranges go through Make_bounded smart constructors.
+
+Verification so far (hardcaml/test/isa_test.ml), per instruction as it is
+added: round trip over every legal instance, a count of legal instances,
+reference encodings computed by hand from the bit layout, and illegal words.
+SET and WAIT are done. Once all eight instructions exist, the top-level
+decode will re-encode and compare to reject reserved bits, and a test over
+all 65,536 words will check encode/decode is one-to-one.
+
+AI use (for the write-up): Claude (Anthropic) reviewed each ISA spec version,
+pointing out timing bugs in the spec's own examples (each UART bit came out
+2 cycles long because loop overhead was not subtracted from the DELAY) and
+gaps such as no pin branch and no OUT bank. It also wrote a complete v0.3
+isa.ml with tests as a reference implementation (kept in deprecated/). I am
+rewriting isa.ml myself, module by module, using that reference to check my
+work, so that I understand and own every part of it; the test helpers were
+suggested by Claude, the reference encodings are worked out by hand. Earlier
+in the project Claude also wrote Host_bridge, the cocotb tests and most of
+the PDK-migration fixes, each verified through the full CI flow.
