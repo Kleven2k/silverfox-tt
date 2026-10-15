@@ -79,3 +79,27 @@ let%test_unit "WAIT: reference encodings" =
   check_encodes ~encode:Wait.encode 
     { pin = Pin.of_int_exn 7; bank = Ui; condition = Rising } ~expect:0x1C06;
 ;; 
+
+(* --- IN --- *)
+
+let%test_unit "IN: round trip" =
+  check_round_trip 
+    ~encode:In.encode
+    ~decode:In.decode
+    ~equal:In.equal
+    ~sexp_of:In.sexp_of_t
+    In.all
+;;
+
+let%test_unit "IN: 64 instructions" =
+  [%test_result: int] (List.length In.all) ~expect:64
+;;
+
+let%test_unit "IN: reference encodings" =
+  check_encodes ~encode:In.encode 
+    { pin = Pin.of_int_exn 0; bank = Uio; destination = X; order = Lsb_first } ~expect:0x0000;
+  check_encodes ~encode:In.encode
+    { pin = Pin.of_int_exn 5; bank = Ui; destination = Y; order = Msb_first } ~expect:0x1407;
+  check_encodes ~encode:In.encode
+    { pin = Pin.of_int_exn 2; bank = Uio; destination = Y; order = Lsb_first } ~expect:0x0801;
+;;

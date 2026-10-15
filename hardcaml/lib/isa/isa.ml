@@ -38,6 +38,8 @@ module Field = struct
 
   (* WAIT *)
   let wait_condition = { lsb = 0; width = 2 }
+  let shift_register = { lsb = 0; width = 1 }
+  let shift_order = { lsb = 1; width = 1 }
   let bank = { lsb = 2; width = 1 }
 end 
 
@@ -118,6 +120,42 @@ module Register = struct
     | _ -> None
   ;;
 end
+
+module Shift_register = struct 
+  type t =
+    | X 
+    | Y 
+  [@@deriving sexp_of, compare, equal, enumerate]
+
+  let to_bits = function 
+    | X -> 0
+    | Y -> 1
+  ;;
+
+  let of_bits = function 
+    | 0 -> Some X
+    | 1 -> Some Y 
+    | _ -> None 
+  ;;
+end 
+
+module Shift_order = struct 
+  type t = 
+    | Lsb_first 
+    | Msb_first
+  [@@deriving sexp_of, compare, equal, enumerate]
+
+  let to_bits = function 
+    | Lsb_first -> 0
+    | Msb_first -> 1
+  ;;
+
+  let of_bits = function 
+    | 0 -> Some Lsb_first
+    | 1 -> Some Msb_first
+    | _ -> None 
+  ;;
+end 
 
 module Input_bank = struct
   type t = 
@@ -284,6 +322,43 @@ module Wait = struct
     List.concat_map Pin.all ~f:(fun pin ->
       List.concat_map Input_bank.all ~f:(fun bank ->
         List.map Condition.all ~f:(fun condition -> { pin; bank; condition })))
-  
+  ;;
 end
+
+module In = struct 
+  type t = 
+    { pin : Pin.t
+    ; bank : Input_bank.t
+    ; destination : Shift_register.t 
+    ; order : Shift_order.t 
+    }
+  [@@deriving sexp_of, compare, equal]
+
+  let encode { pin; bank; destination; order } =
+    0
+    |> Field.put Field.arg1 (Pin.to_int pin)
+    |> Field.put Field.bank (Input_bank.to_bits bank)
+    |> Field.put Field.shift_register (Shift_register.to_bits destination)
+    |> Field.put Field.shift_order (Shift_order.to_bits order)
+  ;;
+
+  let decode word =
+    let open Or_error.Let_syntax in
+    let%bind bank = decode_with ~what:"IN bank" Input_bank.of_bits (Field.get Field.bank word) in 
+    let%bind destination = 
+      decode_with ~what:"IN destination" Shift_register.of_bits (Field.get Field.shift_register word)
+    in
+    let%map order = 
+      decode_with ~what:"IN order" Shift_order.of_bits (Field.get Field.shift_order word)
+    in
+    { pin = Pin.of_int_exn (Field.get Field.arg1 word); bank; destination; order }
+  ;;
+
+  let all =
+    List.concat_map Pin.all ~f:(fun pin ->
+      List.concat_map Input_bank.all ~f:(fun bank ->
+        List.concat_map Shift_register.all ~f:(fun destination ->
+          List.map Shift_order.all ~f:(fun order -> { pin; bank; destination; order }))))
+  ;;
+end 
 
