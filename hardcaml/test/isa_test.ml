@@ -55,3 +55,27 @@ let%test_unit "SET: illegal words" =
   check_illegal ~decode:Set.decode 0x0100;  (* SET_BITS on X *)
   check_illegal ~decode:Set.decode 0x1800   (* reserved destination 110 *)
 ;;
+
+(* --- WAIT --- *)
+
+let%test_unit "WAIT: round trip" =
+  check_round_trip 
+    ~encode:Wait.encode 
+    ~decode:Wait.decode 
+    ~equal:Wait.equal
+    ~sexp_of:Wait.sexp_of_t
+    Wait.all
+;;
+
+let%test_unit "WAIT: 64 instructions" =
+  [%test_result: int] (List.length Wait.all) ~expect:64
+;;
+
+let%test_unit "WAIT: reference encodings" = 
+  check_encodes ~encode:Wait.encode
+    { pin = Pin.of_int_exn 0; bank = Uio; condition = Falling } ~expect:0x0003;
+  check_encodes ~encode:Wait.encode
+    { pin = Pin.of_int_exn 3; bank = Ui; condition = High } ~expect:0x0C05;
+  check_encodes ~encode:Wait.encode 
+    { pin = Pin.of_int_exn 7; bank = Ui; condition = Rising } ~expect:0x1C06;
+;; 

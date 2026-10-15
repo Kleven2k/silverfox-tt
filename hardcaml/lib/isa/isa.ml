@@ -35,33 +35,67 @@ module Field = struct
   (* SET *)
   let set_operation = { lsb = 8; width = 2 }
   let set_value = { lsb = 0; width = 8 }
+
+  (* WAIT *)
+  let wait_condition = { lsb = 0; width = 2 }
+  let bank = { lsb = 2; width = 1 }
 end 
 
 let reserved ~what bits =
   Or_error.error_s [%message "reserved destination" (what : string) (bits : int)]
 ;;
 
-module Byte : sig 
+let decode_with ~what of_bits bits =
+  match of_bits bits with 
+  | Some x -> Ok x 
+  | None -> reserved ~what bits 
+;;
+
+module type Bounded = sig
   type t = private int [@@deriving sexp_of, compare, equal]
 
+  val min : int
+  val max : int
   val of_int : int -> t Or_error.t
   val of_int_exn : int -> t
   val to_int : t -> int
   val all : t list 
-end = struct
-  type t = int [@@deriving sexp_of, compare, equal]
+end
 
-  let of_int i = 
-    if i < 0 || i > 0xff
-      then Or_error.error_s [%message "byte out of range" ( i : int)]
-    else Ok i
+module Make_bounded (B : sig 
+    val name : string 
+    val min : int 
+    val max : int 
+  end) : Bounded = struct 
+  type t = int [@@deriving sexp_of, compare, equal]
+  
+  let min = B.min
+  let max = B.max
+
+  let of_int i =
+    if i < min || i > max
+    then
+      Or_error.error_s
+        [%message "value out of range" (B.name : string) (i : int) (min : int) (max : int)]
+    else Ok i 
   ;;
 
   let of_int_exn i = Or_error.ok_exn (of_int i)
   let to_int t = t
-  let all = List.range 0 0xff ~stop:`inclusive
-end
+  let all = List.range min max ~stop:`inclusive
+end 
 
+module Pin = Make_bounded (struct
+    let name = "pin"
+    let min = 0
+    let max = Arch.pin_count - 1
+  end)
+
+module Byte = Make_bounded (struct
+  let name = "byte" 
+  let min = 0
+  let max = 0xff
+end)
 
 module Register = struct
   type t =
@@ -82,6 +116,24 @@ module Register = struct
     | 0b001 -> Some Y
     | 0b010 -> Some C
     | _ -> None
+  ;;
+end
+
+module Input_bank = struct
+  type t = 
+    | Uio 
+    | Ui 
+  [@@deriving sexp_of, compare, equal, enumerate]
+
+  let to_bits = function 
+    | Uio -> 0
+    | Ui -> 1
+  ;;
+
+  let of_bits = function
+    | 0 -> Some Uio 
+    | 1 -> Some Ui 
+    | _ -> None 
   ;;
 end
 
@@ -179,3 +231,59 @@ module Set = struct
         ~f:(fun (operation, mask) -> Gpio { register; operation; mask }))
   ;;
 end
+
+module Wait = struct
+  module Condition = struct 
+    type t = 
+      | Low
+      | High
+      | Rising
+      | Falling 
+    [@@deriving sexp_of, compare, equal, enumerate]
+
+    let to_bits = function 
+      | Low -> 0b00
+      | High -> 0b01
+      | Rising -> 0b10
+      | Falling -> 0b11
+    ;;
+
+    let of_bits = function
+      | 0b00 -> Some Low
+      | 0b01 -> Some High
+      | 0b10 -> Some Rising
+      | 0b11 -> Some Falling
+      | _ -> None
+    ;;
+  end 
+  
+  type t =
+    { pin : Pin.t
+    ; bank : Input_bank.t 
+    ; condition : Condition.t 
+    }
+  [@@deriving sexp_of, compare, equal]
+
+  let encode { pin; bank; condition } =
+    0
+    |> Field.put Field.arg1 (Pin.to_int pin)
+    |> Field.put Field.bank (Input_bank.to_bits bank)
+    |> Field.put Field.wait_condition (Condition.to_bits condition)
+  ;;
+
+  let decode word =
+    let open Or_error.Let_syntax in 
+    let%bind bank = decode_with ~what:"WAIT bank" Input_bank.of_bits (Field.get Field.bank word) in 
+    let%map condition =
+      decode_with ~what:"WAIT condition" Condition.of_bits (Field.get Field.wait_condition word)
+    in
+    { pin = Pin.of_int_exn (Field.get Field.arg1 word); bank; condition }
+  ;;
+
+  let all =
+    List.concat_map Pin.all ~f:(fun pin ->
+      List.concat_map Input_bank.all ~f:(fun bank ->
+        List.map Condition.all ~f:(fun condition -> { pin; bank; condition })))
+  
+end
+
