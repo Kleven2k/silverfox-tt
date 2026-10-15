@@ -10,7 +10,7 @@ module Arch = struct
   let delay_max_cycles = 8192
 end
 
-(* Bit positions within the 16-bit word. The signle source of truth for the
+(* Bit positions within the 16-bit word. The single source of truth for the
    encoder, the decoder and the RTL decoder. *)
 module Field = struct 
   type t =
@@ -36,11 +36,12 @@ module Field = struct
   let set_operation = { lsb = 8; width = 2 }
   let set_value = { lsb = 0; width = 8 }
 
-  (* WAIT *)
+  (* WAIT, IN, OUT *)
   let wait_condition = { lsb = 0; width = 2 }
   let shift_register = { lsb = 0; width = 1 }
   let shift_order = { lsb = 1; width = 1 }
   let bank = { lsb = 2; width = 1 }
+  let output_mode = { lsb = 3; width = 1 }
 end 
 
 let reserved ~what bits =
@@ -226,6 +227,13 @@ module Set = struct
     | Uo_out -> 0b101
   ;;
 
+  let gpio_of_bits = function
+    | 0b011 -> Some Gpio_register.Pins_out 
+    | 0b100 -> Some Pins_oe 
+    | 0b101 -> Some Uo_out 
+    | _ -> None 
+  ;;
+
   let encode t =
     let destination, operation, value =
       match t with 
@@ -241,24 +249,22 @@ module Set = struct
   let decode word =
     let value = Byte.of_int_exn (Field.get Field.set_value word) in
     let operation_bits = Field.get Field.set_operation word in
-    let gpio register =
-      Ok(
-        Gpio
+    let code = Field.get Field.arg1 word in
+    match Register.of_bits code, gpio_of_bits code with
+    | Some register, _ ->
+      if operation_bits = 0
+      then Ok (Reg { register; value })
+      else Or_error.error_string "SET on X/Y/C supports WRITE only"
+    | None, Some register ->
+      Ok
+        (Gpio
           { register
           ; operation = Option.value_exn (Gpio_operation.of_bits operation_bits)
           ; mask = value
-          }
-      ) in
-    match Field.get Field.arg1 word with 
-    | (0b000 | 0b001 | 0b010) as code ->
-      if operation_bits = 0
-      then Ok (Reg { register = Option.value_exn (Register.of_bits code); value })
-      else Or_error.error_string "SET on X/Y/C supports WRITE only"
-    | 0b011 -> gpio Pins_out
-    | 0b100 -> gpio Pins_oe
-    | 0b101 -> gpio Uo_out
-    | code -> reserved ~what:"SET destination" code
+          })
+    | None, None -> reserved ~what:"SET destination" code
   ;;
+
 
   let all =
     List.map (List.cartesian_product Register.all Byte.all) ~f:(fun (register, value) ->
@@ -362,3 +368,73 @@ module In = struct
   ;;
 end 
 
+module Out = struct
+  module Mode = struct 
+    type t =
+      | Push_pull
+      | Open_drain
+    [@@deriving sexp_of, compare, equal, enumerate]
+  end 
+
+  (* UO has no output-enable, so there is no way to even write "open-drain on
+     UO". Push-pull on UIO writes PINS_OUT[pin] and leaves PINS_OE alone. *)
+  type target =
+    | Uio of 
+      { pin : Pin.t
+      ; mode : Mode.t 
+      } 
+    | Uo of { pin : Pin.t }
+  [@@deriving sexp_of, compare, equal]
+
+  type t = 
+    { target : target 
+    ; source : Shift_register.t 
+    ; order : Shift_order.t 
+    }
+  [@@deriving sexp_of, compare, equal]
+
+  let encode { target; source; order } =
+    let pin, bank, mode =
+      match target with 
+      | Uio { pin; mode = Push_pull } -> pin, 0, 0
+      | Uio { pin; mode = Open_drain } -> pin, 0, 1
+      | Uo { pin } -> pin, 1, 0
+    in
+    0 
+    |> Field.put Field.arg1 (Pin.to_int pin)
+    |> Field.put Field.bank bank 
+    |> Field.put Field.output_mode mode 
+    |> Field.put Field.shift_register (Shift_register.to_bits source)
+    |> Field.put Field.shift_order (Shift_order.to_bits order)
+  ;;
+
+  let decode word =
+    let open Or_error.Let_syntax in
+    let pin = Pin.of_int_exn (Field.get Field.arg1 word) in 
+    let%bind target =
+      match Field.get Field.bank word, Field.get Field.output_mode word with 
+      | 0, 0 -> Ok (Uio { pin; mode = Push_pull })
+      | 0, 1 -> Ok (Uio { pin; mode = Open_drain })
+      | 1, 0 -> Ok (Uo { pin })
+      | 1, 1 -> Or_error.error_string "OUT: open drain is not available on UO"
+      | bank, mode -> raise_s [%message "BUG: 1-bit field out of range" (bank : int) (mode : int)]
+    in
+    let%bind source =
+      decode_with ~what:"OUT source" Shift_register.of_bits (Field.get Field.shift_register word)
+    in
+    let%map order =
+      decode_with ~what:"OUT order" Shift_order.of_bits (Field.get Field.shift_order word)
+    in
+    { target; source; order }
+  ;;
+
+  let all =
+    let targets =
+      List.concat_map Pin.all ~f:(fun pin ->
+        Uo { pin } :: List.map Mode.all ~f:(fun mode -> Uio { pin; mode }))
+    in
+    List.concat_map targets ~f:(fun target ->
+      List.concat_map Shift_register.all ~f:(fun source ->
+        List.map Shift_order.all ~f:(fun order -> { target; source; order })))
+  ;;
+end

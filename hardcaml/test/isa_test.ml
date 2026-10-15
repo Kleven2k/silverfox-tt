@@ -26,7 +26,7 @@ let check_encodes ~encode instruction ~expect =
 let check_illegal ~decode word =
   match decode word with
   | Error _ -> ()
-  | Ok _ -> raise_s [%message "expected decode to fall" (word : Int.Hex.t)]
+  | Ok _ -> raise_s [%message "expected decode to fail" (word : Int.Hex.t)]
 ;;
 
 (* --- SET --- *)
@@ -40,6 +40,10 @@ let%test_unit "SET: round trip" =
     Set.all
 ;;
 
+let%test_unit "SET: count 3840" =
+  [%test_result: int] (List.length Set.all) ~expect:3840
+;;
+
 let%test_unit "SET: reference encodings" =
   check_encodes
     ~encode:Set.encode
@@ -48,12 +52,21 @@ let%test_unit "SET: reference encodings" =
   check_encodes
     ~encode:Set.encode
     (Gpio { register = Pins_out; operation = Set_bits; mask = Byte.of_int_exn 0x01 })
-    ~expect:0x0D01
+    ~expect:0x0D01;
+  check_encodes 
+    ~encode:Set.encode
+    (Gpio { register = Pins_oe; operation = Clear_bits; mask = Byte.of_int_exn 0x04 })
+    ~expect:0x1204;
+  check_encodes 
+    ~encode:Set.encode 
+    (Gpio { register = Uo_out; operation = Toggle_bits; mask = Byte.of_int_exn 0xFF })
+    ~expect:0x17FF;
 ;;
 
 let%test_unit "SET: illegal words" =
   check_illegal ~decode:Set.decode 0x0100;  (* SET_BITS on X *)
-  check_illegal ~decode:Set.decode 0x1800   (* reserved destination 110 *)
+  check_illegal ~decode:Set.decode 0x1800;  (* reserved encoding 110 *)
+  check_illegal ~decode:Set.decode 0x1C00   (* reserved encoding 111 *)
 ;;
 
 (* --- WAIT --- *)
@@ -102,4 +115,33 @@ let%test_unit "IN: reference encodings" =
     { pin = Pin.of_int_exn 5; bank = Ui; destination = Y; order = Msb_first } ~expect:0x1407;
   check_encodes ~encode:In.encode
     { pin = Pin.of_int_exn 2; bank = Uio; destination = Y; order = Lsb_first } ~expect:0x0801;
+;;
+
+(* --- OUT --- *)
+
+let%test_unit "OUT: round trip" =
+  check_round_trip
+    ~encode:Out.encode
+    ~decode:Out.decode
+    ~equal:Out.equal
+    ~sexp_of:Out.sexp_of_t
+    Out.all
+;;
+
+let%test_unit "OUT: count" =
+  [%test_result: int] (List.length Out.all) ~expect:96
+;;
+
+let%test_unit "OUT: reference encodings" =
+  check_encodes ~encode:Out.encode 
+    { target = Uio { pin = Pin.of_int_exn 0; mode = Push_pull }; source = X; order = Lsb_first } ~expect:0x0000;
+  check_encodes ~encode:Out.encode 
+    { target = Uio { pin = Pin.of_int_exn 4; mode = Open_drain }; source = Y; order = Msb_first } ~expect:0x100B;
+  check_encodes ~encode:Out.encode
+    { target = Uo { pin = Pin.of_int_exn 7}; source = X; order = Msb_first } ~expect:0x1C06;
+;;
+
+let%test_unit "OUT: illegal words" =
+  check_illegal ~decode:Out.decode 0x000C;   (* open-drain on UO *)
+  check_illegal ~decode:Out.decode 0x1C0F;
 ;;
