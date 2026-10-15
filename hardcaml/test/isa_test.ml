@@ -145,3 +145,54 @@ let%test_unit "OUT: illegal words" =
   check_illegal ~decode:Out.decode 0x000C;   (* open-drain on UO *)
   check_illegal ~decode:Out.decode 0x1C0F;
 ;;
+
+(* --- DELAY --- *)
+
+let%test_unit "DELAY: round trip" =
+  check_round_trip
+    ~encode:Delay.encode
+    ~decode:Delay.decode 
+    ~equal:Delay.equal
+    ~sexp_of:Delay.sexp_of_t
+    Delay.all
+;;
+
+let%test_unit "DELAY: count" =
+  [%test_result: int] (List.length Delay.all) ~expect:8192
+;;
+
+let%test_unit "DELAY: reference encodings" =
+  let delay n = { Delay.cycles = Delay_cycles.of_int_exn n } in
+  check_encodes ~encode:Delay.encode (delay 1) ~expect:0x0000;      (* minimum *)
+  check_encodes ~encode:Delay.encode (delay 2) ~expect:0x0001;      
+  check_encodes ~encode:Delay.encode (delay 8192) ~expect:0x1FFF;   (* maximum *)
+  check_encodes ~encode:Delay.encode (delay 102) ~expect:0x0065   
+;;
+
+let%test_unit "DELAY: cycle range" =
+  assert (Or_error.is_error (Delay_cycles.of_int 0));     (* no zero-cycle delay *)
+  assert (Or_error.is_error (Delay_cycles.of_int 8193));  (* one past the max *)
+  assert (Or_error.is_ok (Delay_cycles.of_int 1));
+  assert (Or_error.is_ok (Delay_cycles.of_int 8192))
+;;
+
+(* --- SYS --- *)
+
+let%test_unit "SYS: round trip" =
+  check_round_trip
+    ~encode:Sys.encode
+    ~decode:Sys.decode 
+    ~equal:Sys.equal
+    ~sexp_of:Sys.sexp_of_t
+    Sys.all
+;;
+
+let%test_unit "SYS: reference encodings" =
+  check_encodes ~encode:Sys.encode Halt ~expect:0x0000;
+  check_encodes ~encode:Sys.encode Nop ~expect:0x0400;
+;;
+
+let%test_unit "SYS: illegal words" =
+  check_illegal ~decode:Sys.decode 0x0800;
+  check_illegal ~decode:Sys.decode 0x1C00;
+;;

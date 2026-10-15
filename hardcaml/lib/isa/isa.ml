@@ -42,6 +42,9 @@ module Field = struct
   let shift_order = { lsb = 1; width = 1 }
   let bank = { lsb = 2; width = 1 }
   let output_mode = { lsb = 3; width = 1 }
+
+  (* DELAY: the whole 13-bit operand, holding [cycles - 1]. *)
+  let delay = { lsb = 0; width = 13 }
 end 
 
 let reserved ~what bits =
@@ -99,6 +102,12 @@ module Byte = Make_bounded (struct
   let min = 0
   let max = 0xff
 end)
+
+module Delay_cycles = Make_bounded (struct 
+    let name = "delay cycles"
+    let min = Arch.delay_min_cycles
+    let max = Arch.delay_max_cycles
+  end)
 
 module Register = struct
   type t =
@@ -264,7 +273,6 @@ module Set = struct
           })
     | None, None -> reserved ~what:"SET destination" code
   ;;
-
 
   let all =
     List.map (List.cartesian_product Register.all Byte.all) ~f:(fun (register, value) ->
@@ -438,3 +446,45 @@ module Out = struct
         List.map Shift_order.all ~f:(fun order -> { target; source; order })))
   ;;
 end
+
+module Delay = struct 
+  (* Machine encoding stores [cycles - 1], so DELAY is always 1..8192 cycles. *)
+  type t = { cycles : Delay_cycles.t } [@@deriving sexp_of, compare, equal]
+
+  let encode { cycles } = Field.put Field.delay (Delay_cycles.to_int cycles - 1) 0
+
+  let decode word =
+    Ok { cycles = Delay_cycles.of_int_exn (Field.get Field.delay word + 1) }
+  ;;
+
+  let all = List.map Delay_cycles.all ~f:(fun cycles -> { cycles })
+end 
+
+module Sys = struct 
+  (* HALT is SYS 000 on purpose: program memory resets to 0xE000, so empty
+     memory halts instead of sliding though NOPs. *)
+  type t =
+    | Halt 
+    | Nop 
+  [@@deriving sexp_of, compare, equal, enumerate]
+
+  let encode t =
+    Field.put 
+      Field.arg1 
+      (match t with
+        | Halt -> 0b000
+        | Nop -> 0b001)
+      0
+  ;;
+
+  let decode word =
+    match Field.get Field.arg1 word with 
+    | 0b000 -> Ok Halt 
+    | 0b001 -> Ok Nop 
+    | code -> reserved ~what:"SYS operation" code 
+  ;;
+end 
+
+(* ---------------------------------------------------------------------- *)
+(* Top level                                                              *)
+(* ---------------------------------------------------------------------- *)
