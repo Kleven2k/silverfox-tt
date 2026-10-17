@@ -60,7 +60,7 @@ let%test_unit "SET: reference encodings" =
   check_encodes 
     ~encode:Set.encode 
     (Gpio { register = Uo_out; operation = Toggle_bits; mask = Byte.of_int_exn 0xFF })
-    ~expect:0x17FF;
+    ~expect:0x17FF
 ;;
 
 let%test_unit "SET: illegal words" =
@@ -90,7 +90,7 @@ let%test_unit "WAIT: reference encodings" =
   check_encodes ~encode:Wait.encode
     { pin = Pin.of_int_exn 3; bank = Ui; condition = High } ~expect:0x0C05;
   check_encodes ~encode:Wait.encode 
-    { pin = Pin.of_int_exn 7; bank = Ui; condition = Rising } ~expect:0x1C06;
+    { pin = Pin.of_int_exn 7; bank = Ui; condition = Rising } ~expect:0x1C06
 ;; 
 
 (* --- IN --- *)
@@ -114,7 +114,7 @@ let%test_unit "IN: reference encodings" =
   check_encodes ~encode:In.encode
     { pin = Pin.of_int_exn 5; bank = Ui; destination = Y; order = Msb_first } ~expect:0x1407;
   check_encodes ~encode:In.encode
-    { pin = Pin.of_int_exn 2; bank = Uio; destination = Y; order = Lsb_first } ~expect:0x0801;
+    { pin = Pin.of_int_exn 2; bank = Uio; destination = Y; order = Lsb_first } ~expect:0x0801
 ;;
 
 (* --- OUT --- *)
@@ -138,12 +138,46 @@ let%test_unit "OUT: reference encodings" =
   check_encodes ~encode:Out.encode 
     { target = Uio { pin = Pin.of_int_exn 4; mode = Open_drain }; source = Y; order = Msb_first } ~expect:0x100B;
   check_encodes ~encode:Out.encode
-    { target = Uo { pin = Pin.of_int_exn 7}; source = X; order = Msb_first } ~expect:0x1C06;
+    { target = Uo { pin = Pin.of_int_exn 7}; source = X; order = Msb_first } ~expect:0x1C06
 ;;
 
 let%test_unit "OUT: illegal words" =
   check_illegal ~decode:Out.decode 0x000C;   (* open-drain on UO *)
-  check_illegal ~decode:Out.decode 0x1C0F;
+  check_illegal ~decode:Out.decode 0x1C0F
+;;
+
+(* --- JMP --- *)
+
+let%test_unit "JMP: round trip" =
+  check_round_trip
+    ~encode:Jmp.encode
+    ~decode:Jmp.decode
+    ~equal:Jmp.equal
+    ~sexp_of:Jmp.sexp_of_t
+    Jmp.all
+;;
+
+let%test_unit "JMP: count" =
+  [%test_result: int] (List.length Jmp.all) ~expect:2368
+;;
+
+let%test_unit "JMP: reference encodings" =
+  check_encodes ~encode:Jmp.encode 
+    ( Always { target = Target.of_int_exn 0 }) ~expect:0x0000;
+  check_encodes ~encode:Jmp.encode
+    ( If_zero { register = Y; target = Target.of_int_exn 5 }) ~expect:0x0805;
+  check_encodes ~encode:Jmp.encode 
+    ( C_nz_dec { target = Target.of_int_exn 5 }) ~expect:0x1005;
+  check_encodes ~encode:Jmp.encode
+    ( If_pin { level = High; bank = Ui; pin = Pin.of_int_exn 3; target = Target.of_int_exn 10 }) ~expect:0x1ACA;
+  check_encodes ~encode:Jmp.encode
+    ( If_pin { level = Low; bank = Uio; pin = Pin.of_int_exn 7; target = Target.of_int_exn 63 }) ~expect:0x15FF
+;;
+
+let%test_unit "JMP: illegal words" =
+  check_illegal ~decode:Jmp.decode 0x1C00   (* reserved condition 111 *)
+  (* Unused-bit words (e.g. 0x0040, ALWAYS with a pin bit) are rejected by
+     the top-level decode, not here; tested in the Instruction section. *)
 ;;
 
 (* --- MOV --- *)
@@ -167,7 +201,7 @@ let%test_unit "MOV: reference encodings" =
   check_encodes ~encode:Mov.encode
     { Mov.destination = Pins_out; source = X } ~expect:0x1400;
   check_encodes ~encode:Mov.encode
-    { Mov.destination = Uo_out; source = Uio_in } ~expect:0x1C04;
+    { Mov.destination = Uo_out; source = Uio_in } ~expect:0x1C04
 ;;
 
 let%test_unit "MOV: illegal words" =

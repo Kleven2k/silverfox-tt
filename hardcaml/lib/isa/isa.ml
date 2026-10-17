@@ -43,6 +43,11 @@ module Field = struct
   let bank = { lsb = 2; width = 1 }
   let output_mode = { lsb = 3; width = 1 }
 
+  (* JMP *)
+  let jmp_target = { lsb = 0; width = 6 }
+  let jmp_pin = { lsb = 6; width = 3 }
+  let jmp_bank = { lsb = 9; width = 1 }
+
   (* MOV *)
   let mov_source = {lsb = 0; width = 3 }
 
@@ -59,6 +64,10 @@ let decode_with ~what of_bits bits =
   | Some x -> Ok x 
   | None -> reserved ~what bits 
 ;;
+
+(* ---------------------------------------------------------------------- *)
+(* Range-checked integers                                                 *)
+(* ---------------------------------------------------------------------- *)
 
 module type Bounded = sig
   type t = private int [@@deriving sexp_of, compare, equal]
@@ -100,6 +109,12 @@ module Pin = Make_bounded (struct
     let max = Arch.pin_count - 1
   end)
 
+module Target = Make_bounded (struct 
+    let name = "jump target"
+    let min = 0
+    let max = Arch.program_words - 1
+  end)
+
 module Byte = Make_bounded (struct
   let name = "byte" 
   let min = 0
@@ -111,6 +126,11 @@ module Delay_cycles = Make_bounded (struct
     let min = Arch.delay_min_cycles
     let max = Arch.delay_max_cycles
   end)
+
+(* ---------------------------------------------------------------------- *)
+(* Shared operand enums. Bit codes are written out explicitly, so         *)
+(* reordering constructors can never silently change the encoding.        *)
+(* ---------------------------------------------------------------------- *)
 
 module Register = struct
   type t =
@@ -188,6 +208,13 @@ module Input_bank = struct
   ;;
 end
 
+module Level = struct 
+  type t = 
+    | Low
+    | High
+  [@@deriving sexp_of, compare, equal, enumerate]
+end
+
 module Gpio_register = struct 
   type t =
     | Pins_out
@@ -219,6 +246,15 @@ module Gpio_operation = struct
     | _ -> None 
   ;;
 end
+
+(* ---------------------------------------------------------------------- *)
+(* Instructions. Each module owns its type, encoder, decoder and the list  *)
+(* of every legal instance. [encode] returns operand bits (12..0) only;    *)
+(* [decode] reads operand fields from a full word. Reserved-bit checking is *)
+(* done once, centrally, in [Instruction.decode].                          *)
+(* ---------------------------------------------------------------------- *)
+
+(* SET: registers support WRITE only; GPIO registers support all four ops. *)
 
 module Set = struct
   type t =
@@ -449,6 +485,83 @@ module Out = struct
         List.map Shift_order.all ~f:(fun order -> { target; source; order })))
   ;;
 end
+
+module Jmp = struct 
+  (* [C_nz_dec]: if C = 0, fall through with C unchanged (no underflow);
+     otherwise decrement C and jump if the new value is nonzero. So
+     "SET C, n; loop: ...; JMP C_nz_dec, loop" runs the body exactly n times. *)
+  type t =
+    | Always of { target : Target.t }
+    | If_zero of 
+        { register : Register.t 
+        ; target : Target.t
+        }
+    | C_nz_dec of { target : Target.t }
+    | If_pin of 
+        { level : Level.t
+        ; bank : Input_bank.t 
+        ; pin : Pin.t 
+        ; target : Target.t 
+        }
+  [@@deriving sexp_of, compare, equal]
+
+  let target = function 
+    | Always { target } | If_zero { target; _ } | C_nz_dec { target } | If_pin { target; _ } ->
+      target 
+  ;;
+
+  let condition_to_bits = function 
+    | Always _ -> 0b000
+    | If_zero { register = X; _ } -> 0b001
+    | If_zero { register = Y; _ } -> 0b010
+    | If_zero { register = C; _ } -> 0b011
+    | C_nz_dec _ -> 0b100
+    | If_pin { level = Low; _ } -> 0b101
+    | If_pin { level = High; _ } -> 0b110
+  ;;
+
+  let encode t =
+    let word =
+      0
+      |> Field.put Field.arg1 (condition_to_bits t)
+      |> Field.put Field.jmp_target (Target.to_int (target t))
+    in
+    match t with 
+    | If_pin { bank; pin; _ } ->
+      word 
+      |> Field.put Field.jmp_bank (Input_bank.to_bits bank)
+      |> Field.put Field.jmp_pin (Pin.to_int pin)
+    | Always _ | If_zero _ | C_nz_dec _ -> word 
+  ;;
+
+  let decode word =
+    let target = Target.of_int_exn (Field.get Field.jmp_target word) in 
+    let if_pin level =
+      let pin = Pin.of_int_exn (Field.get Field.jmp_pin word) in
+      Or_error.map 
+        (decode_with ~what:"JMP bank" Input_bank.of_bits (Field.get Field.jmp_bank word))
+        ~f:(fun bank -> If_pin { level; bank; pin; target })
+    in
+    match Field.get Field.arg1 word with 
+    | 0b000 -> Ok (Always { target })
+    | 0b001 -> Ok (If_zero { register = X; target })
+    | 0b010 -> Ok (If_zero { register = Y; target })
+    | 0b011 -> Ok (If_zero { register = C; target })
+    | 0b100 -> Ok (C_nz_dec { target })
+    | 0b101 -> if_pin Low
+    | 0b110 -> if_pin High
+    | code -> reserved ~what:"JMP condition" code 
+  ;;
+
+  let all = 
+    List.concat_map Target.all ~f:(fun target ->
+      [ Always { target }; C_nz_dec { target } ]
+      @ List.map Register.all ~f:(fun register -> If_zero { register; target })
+      @ List.concat_map Level.all ~f:(fun level -> 
+        List.concat_map Input_bank.all ~f:(fun bank ->
+          List.map Pin.all ~f:(fun pin -> If_pin { level; bank; pin; target }))))
+  ;;
+end 
 
 module Mov = struct 
   (* The input banks are not writeable destinations, so they are not in this type. *)
