@@ -706,3 +706,115 @@ end
 (* ---------------------------------------------------------------------- *)
 (* Top level                                                              *)
 (* ---------------------------------------------------------------------- *)
+
+module Opcode = struct
+  type t =
+    | Set
+    | Wait
+    | In
+    | Out
+    | Jmp
+    | Mov
+    | Delay
+    | Sys
+  [@@deriving sexp_of, compare, equal, enumerate]
+
+  let to_bits = function
+    | Set -> 0b000
+    | Wait -> 0b001
+    | In -> 0b010
+    | Out -> 0b011
+    | Jmp -> 0b100
+    | Mov -> 0b101
+    | Delay -> 0b110
+    | Sys -> 0b111
+  ;;
+
+  let of_bits = function
+    | 0b000 -> Set
+    | 0b001 -> Wait
+    | 0b010 -> In
+    | 0b011 -> Out
+    | 0b100 -> Jmp
+    | 0b101 -> Mov
+    | 0b110 -> Delay
+    | 0b111 -> Sys
+    | bits -> raise_s [%message "BUG: opcode field out of range" (bits : int)]
+  ;;
+end
+
+module Instruction = struct 
+  type t =
+    | Set of Set.t
+    | Wait of Wait.t
+    | In of In.t
+    | Out of Out.t
+    | Jmp of Jmp.t
+    | Mov of Mov.t
+    | Delay of Delay.t
+    | Sys of Sys.t
+  [@@deriving sexp_of, compare, equal]
+
+  let encode t = 
+    let opcode, operands =
+      match t with 
+      | Set x -> Opcode.Set, Set.encode x
+      | Wait x -> Opcode.Wait, Wait.encode x
+      | In x -> Opcode.In, In.encode x
+      | Out x -> Opcode.Out, Out.encode x
+      | Jmp x -> Opcode.Jmp, Jmp.encode x
+      | Mov x -> Opcode.Mov, Mov.encode x
+      | Delay x -> Opcode.Delay, Delay.encode x
+      | Sys x -> Opcode.Sys, Sys.encode x
+    in 
+    Field.put Field.opcode (Opcode.to_bits opcode) operands
+  ;;
+
+  (* Canonical decode: after decoding the meaningful fields, re-encode and
+     require an exact match. This rejects any word with nonzero reserved bits
+     without listing reserved fields per instruction, and guarantees
+     [encode] and [decode] are exact inverses on legal words. *)
+  let decode word =
+    let open Or_error.Let_syntax in
+    if word < 0 || word > 0xFFFF
+    then Or_error.error_s [%message "not a 16-bit word" (word : int)]
+    else (
+      let%bind t =
+        match Opcode.of_bits (Field.get Field.opcode word) with 
+        | Set -> Set.decode word >>| fun x -> Set x
+        | Wait -> Wait.decode word >>| fun x -> Wait x
+        | In -> In.decode word >>| fun x -> In x
+        | Out -> Out.decode word >>| fun x -> Out x
+        | Jmp -> Jmp.decode word >>| fun x -> Jmp x
+        | Mov -> Mov.decode word >>| fun x -> Mov x
+        | Delay -> Delay.decode word >>| fun x -> Delay x
+        | Sys -> Sys.decode word >>| fun x -> Sys x
+      in
+      if encode t = word
+      then Ok t
+      else Or_error.error_s [%message "reserved bits must be zero" (word : int) (t : t)]
+      )
+  ;;
+ 
+  (* Cycles an instruction occupies before the next one starts. [None] means
+     it depends on external input (WAIT) or never completes (HALT). This is the
+     shared cost table for the reference model and the static timing checker. *)
+  let cycles = function
+    | Set _ | In _ | Out _ | Jmp _ | Mov _ | Sys Nop -> Some 1
+    | Delay { cycles } -> Some (Delay_cycles.to_int cycles)
+    | Wait _ | Sys Halt -> None
+  ;;
+
+  let all =
+    List.concat 
+      [ List.map Set.all ~f:(fun x -> Set x)
+      ; List.map Wait.all ~f:(fun x -> Wait x)
+      ; List.map In.all ~f:(fun x -> In x)
+      ; List.map Out.all ~f:(fun x -> Out x)
+      ; List.map Jmp.all ~f:(fun x -> Jmp x)
+      ; List.map Mov.all ~f:(fun x -> Mov x)
+      ; List.map Delay.all ~f:(fun x -> Delay x)
+      ; List.map Sys.all ~f:(fun x -> Sys x)
+      ]
+  ;;
+end

@@ -260,3 +260,74 @@ let%test_unit "SYS: illegal words" =
   check_illegal ~decode:Sys.decode 0x0800;
   check_illegal ~decode:Sys.decode 0x1C00;
 ;;
+
+(* --- Top level --- *)
+
+let%test_unit "Instruction: round trip" =
+  check_round_trip
+    ~encode:Instruction.encode
+    ~decode:Instruction.decode
+    ~equal:Instruction.equal
+    ~sexp_of:Instruction.sexp_of_t
+    Instruction.all 
+;;
+
+let%test_unit "Instruction: full-word encodings" =
+  let check i expect = check_encodes ~encode:Instruction.encode i ~expect in
+  (* SET *)
+  check (Set (Reg { register = C; value = Byte.of_int_exn 8 })) 0x0808;
+
+  (* WAIT *)
+  check (Wait { pin = Pin.of_int_exn 3; bank = Ui; condition = High }) 0x2C05;
+
+  (* IN *)
+  check (In { pin = Pin.of_int_exn 2; bank = Uio; destination = Y; order = Lsb_first }) 0x4801;
+
+  (* OUT *)
+  check (Out { target = Uo { pin = Pin.of_int_exn 7}; source = X; order = Msb_first }) 0x7C06;
+
+  (* JMP *)
+  check (Jmp ( If_pin { level = Low; bank = Uio; pin = Pin.of_int_exn 7; target = Target.of_int_exn 63 })) 0x95FF;
+
+  (* MOV *)
+  check (Mov { Mov.destination = Uo_out; source = Uio_in }) 0xBC04;
+
+  (* DELAY *)
+  check (Delay { cycles = Delay_cycles.of_int_exn 1 }) 0xC000;
+
+  (* SYS *)
+  check (Sys Halt) 0xE000;
+  check (Sys Nop) 0xE400
+;;
+
+let%test_unit "Instruction: illegal words" =
+  check_illegal ~decode:Instruction.decode 0x8040;    (* JMP ALWAYS with a pin bit set *)
+  check_illegal ~decode:Instruction.decode 0x2008;    (* WAIT with reserved bit 3 set  *)
+  check_illegal ~decode:Instruction.decode 0x4008;    (* IN with reserved bit 3 set    *)
+  check_illegal ~decode:Instruction.decode 0x6010;    (* OUT with reserved bit 4 set   *)
+  check_illegal ~decode:Instruction.decode 0xA008;    (* MOV with reserved bit 3 set   *)
+  check_illegal ~decode:Instruction.decode 0xE001     (* HALT with a reserved bit set  *)
+;;
+
+let%test_unit "Instruction: all 65,536 words" =
+  let legal = ref 0 in
+  for word = 0 to 0xFFFF do 
+    match Instruction.decode word with 
+    | Error _ -> ()
+    | Ok i ->
+      incr legal;
+      [%test_result: Int.Hex.t] (Instruction.encode i) ~expect:word
+  done;
+  [%test_result: int] (List.length Instruction.all) ~expect:!legal;
+  [%test_result: int] !legal ~expect:14_674
+;;
+
+let%test_unit "Instruction: cycle costs" =
+  [%test_result: int option] (Instruction.cycles (Sys Nop)) ~expect:(Some 1);
+  [%test_result: int option] (Instruction.cycles (Sys Halt)) ~expect:None;
+  [%test_result: int option]
+    (Instruction.cycles (Delay { cycles = Delay_cycles.of_int_exn 102 })) ~expect:(Some 102);
+  [%test_result: int option]
+    (Instruction.cycles (Wait { pin = Pin.of_int_exn 0; bank = Uio; condition = Falling }))
+    ~expect:None
+;;
