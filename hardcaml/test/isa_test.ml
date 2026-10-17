@@ -146,6 +146,36 @@ let%test_unit "OUT: illegal words" =
   check_illegal ~decode:Out.decode 0x1C0F;
 ;;
 
+(* --- MOV --- *)
+
+let%test_unit "MOV: round trip" =
+  check_round_trip
+    ~encode:Mov.encode
+    ~decode:Mov.decode 
+    ~equal:Mov.equal
+    ~sexp_of:Mov.sexp_of_t
+    Mov.all
+;;
+
+let%test_unit "MOV: count" =
+  [%test_result: int] (List.length Mov.all) ~expect:48
+;;
+
+let%test_unit "MOV: reference encodings" =
+  check_encodes ~encode:Mov.encode
+    { Mov.destination = X; source = Ui_in } ~expect:0x0003;
+  check_encodes ~encode:Mov.encode
+    { Mov.destination = Pins_out; source = X } ~expect:0x1400;
+  check_encodes ~encode:Mov.encode
+    { Mov.destination = Uo_out; source = Uio_in } ~expect:0x1C04;
+;;
+
+let%test_unit "MOV: illegal words" =
+  check_illegal ~decode:Mov.decode 0x0C00;
+  check_illegal ~decode:Mov.decode 0x1001
+;;
+
+
 (* --- DELAY --- *)
 
 let%test_unit "DELAY: round trip" =

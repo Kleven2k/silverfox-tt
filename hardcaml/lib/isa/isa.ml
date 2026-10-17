@@ -43,12 +43,15 @@ module Field = struct
   let bank = { lsb = 2; width = 1 }
   let output_mode = { lsb = 3; width = 1 }
 
+  (* MOV *)
+  let mov_source = {lsb = 0; width = 3 }
+
   (* DELAY: the whole 13-bit operand, holding [cycles - 1]. *)
   let delay = { lsb = 0; width = 13 }
 end 
 
 let reserved ~what bits =
-  Or_error.error_s [%message "reserved destination" (what : string) (bits : int)]
+  Or_error.error_s [%message "reserved encoding" (what : string) (bits : int)]
 ;;
 
 let decode_with ~what of_bits bits =
@@ -447,6 +450,108 @@ module Out = struct
   ;;
 end
 
+module Mov = struct 
+  (* The input banks are not writeable destinations, so they are not in this type. *)
+  module Destination = struct 
+    type t = 
+      | X
+      | Y
+      | C
+      | Pins_out
+      | Pins_oe
+      | Uo_out 
+    [@@deriving sexp_of, compare, equal, enumerate]
+
+    let to_bits = function 
+      | X -> 0b000
+      | Y -> 0b001
+      | C -> 0b010
+      | Pins_out -> 0b101
+      | Pins_oe -> 0b110
+      | Uo_out -> 0b111
+    ;;
+
+    let of_bits = function 
+      | 0b000 -> Some X
+      | 0b001 -> Some Y
+      | 0b010 -> Some C
+      | 0b101 -> Some Pins_out 
+      | 0b110 -> Some Pins_oe 
+      | 0b111 -> Some Uo_out 
+      | _ -> None 
+    ;;
+  end 
+
+  module Source = struct 
+    type t = 
+      | X
+      | Y
+      | C 
+      | Ui_in 
+      | Uio_in 
+      | Pins_out
+      | Pins_oe
+      | Uo_out 
+    [@@deriving sexp_of, compare, equal, enumerate]
+
+    let to_bits = function 
+      | X -> 0b000
+      | Y -> 0b001
+      | C -> 0b010
+      | Ui_in -> 0b011
+      | Uio_in -> 0b100
+      | Pins_out -> 0b101
+      | Pins_oe -> 0b110
+      | Uo_out -> 0b111
+    ;;
+
+    let of_bits = function 
+      | 0b000 -> Some X
+      | 0b001 -> Some Y
+      | 0b010 -> Some C 
+      | 0b011 -> Some Ui_in
+      | 0b100 -> Some Uio_in 
+      | 0b101 -> Some Pins_out
+      | 0b110 -> Some Pins_oe
+      | 0b111 -> Some Uo_out
+      | _ -> None 
+    ;;
+  end 
+
+  (* Host-reserved pins are masked by the wrapper; MOV sees the masked banks. *)
+  type t = 
+    { destination : Destination.t
+    ; source : Source.t
+    }
+  [@@deriving sexp_of, compare, equal]
+
+  let encode { destination; source } =
+    0
+    |> Field.put Field.arg1 (Destination.to_bits destination)
+    |> Field.put Field.mov_source (Source.to_bits source)
+  ;;
+
+  let decode word =
+    let open Or_error.Let_syntax in
+    let%bind destination = 
+      decode_with
+        ~what:"MOV destination (input banks are read-only)"
+        Destination.of_bits
+        (Field.get Field.arg1 word)
+    in
+    let%map source =
+      decode_with ~what:"MOV source" Source.of_bits (Field.get Field.mov_source word)
+    in
+    { destination; source }
+  ;;
+  
+  let all =
+    List.map
+      (List.cartesian_product Destination.all Source.all)
+      ~f:(fun (destination, source) -> { destination; source })
+  ;;
+end 
+
 module Delay = struct 
   (* Machine encoding stores [cycles - 1], so DELAY is always 1..8192 cycles. *)
   type t = { cycles : Delay_cycles.t } [@@deriving sexp_of, compare, equal]
@@ -462,7 +567,7 @@ end
 
 module Sys = struct 
   (* HALT is SYS 000 on purpose: program memory resets to 0xE000, so empty
-     memory halts instead of sliding though NOPs. *)
+     memory halts instead of sliding through NOPs. *)
   type t =
     | Halt 
     | Nop 
