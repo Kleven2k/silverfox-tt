@@ -317,3 +317,55 @@ work, so that I understand and own every part of it; the test helpers were
 suggested by Claude, the reference encodings are worked out by hand. Earlier
 in the project Claude also wrote Host_bridge, the cocotb tests and most of
 the PDK-migration fixes, each verified through the full CI flow.
+
+## 17-10-2026 - ISA v0.3 software side complete: encode/decode verified exhaustively
+All eight instructions (SET, WAIT, IN, OUT, JMP, MOV, DELAY, SYS) are in
+hardcaml/lib/isa/isa.ml, plus the top-level Opcode table and Instruction
+type. Instruction.encode adds the opcode once, on top of each instruction's
+own operand bits; Instruction.decode reads the opcode, dispatches to that
+instruction's decoder, then re-encodes the result and requires an exact match
+with the original word. That last step rejects nonzero reserved bits for every
+instruction at once, without listing reserved fields per instruction.
+
+Verification (hardcaml/test/isa_test.ml, 33 tests, all passing):
+- Per instruction: round trip over every legal instance, a count of legal
+  instances, reference encodings, and illegal words where the instruction's
+  own decoder must reject them (reserved SET destinations, SET_BITS on X/Y/C,
+  open-drain on UO, MOV into an input bank, reserved JMP/SYS codes).
+- Top level: round trip over all instructions, one full-word reference
+  encoding per opcode (HALT = 0xE000, DELAY 1 = 0xC000, ...), reserved-bit
+  words rejected (e.g. 0x8040, a JMP ALWAYS with a pin bit set), and an
+  exhaustive pass over all 65,536 words. Every word either fails to decode
+  or decodes to an instruction that re-encodes to exactly that word, and the
+  number of legal words (14,674) equals the number of legal instructions, so
+  the encoding is one-to-one.
+
+Why both kinds of test are needed: a round trip only proves encode and
+decode agree with each other; it cannot catch both being wrong the same way
+(e.g. a field at the wrong bit position in both). The reference encodings
+were computed by hand from the bit layouts in docs/isa.md, independently of
+the code, so they check the code against the spec. Writing them out also
+caught a mistake in the hand calculation itself (0x1406 vs the correct
+0x1407), which is the point: a disagreement means either the code or the
+calculation is wrong, and both get rechecked. Reference cases were chosen so
+every field is non-zero at least once, since a field that is always zero in
+the references could sit at the wrong position unnoticed.
+
+Lesson from JMP: a per-instruction decoder ignores bits its instruction does
+not use, so "ALWAYS with a pin bit set" decodes fine at that level. That
+test failed when first placed in the JMP section; it belongs at the top
+level, where the re-encode check rejects it. Each layer of tests should
+check only what that layer is responsible for.
+
+AI use in this phase: I wrote each instruction module myself, using Claude's
+reference isa.ml (deprecated/) as an answer key to compare against, and
+Claude explained the OCaml and encoding concepts I had not used before
+(Field get/put and masks, functors and private types, Or_error/let%bind,
+variants vs records) and reviewed each step. The test helpers and the test
+structure were suggested by Claude; the reference encodings were computed by
+hand by me.
+
+Next: bring docs/isa.md up to date with every instruction's bit layout, then
+write a pure OCaml reference model (a step function over PC, X, Y, C, pins and
+the delay counter) that defines what each instruction does, as the oracle for
+lockstep testing of the Hardcaml RTL core.
