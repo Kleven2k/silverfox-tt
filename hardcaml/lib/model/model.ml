@@ -9,22 +9,39 @@ open Isa
  * The model operates one core clock cycle at a time:
  *
  *   step :
- *)
+*)
 
- (* --- Halt reason --- *)
+(* --- Halt reason --- *)
 
- (* --- Inputs --- *)
+(* --- Inputs --- *)
 
- 
- (* --- Architectural state --- *)
- 
- module State = struct 
+module Inputs = struct
+  type t =
+    { ui_in : int
+    ; uio_in : int
+    }
+  [@@deriving sexp_of, compare, equal]
+
+  let zero =
+    { ui_in = 0
+    ; uio_in = 0
+    }
+  ;;
+end
+
+(* --- Architectural state --- *)
+
+module State = struct 
   type t =
     { pc : int
-    ; x : int; y : int; c : int 
+    ; x : int
+    ; y : int
+    ; c : int 
     ; pins_out : int
     ; pins_oe : int
     ; uo_out : int
+    ; prev_ui : int
+    ; prev_uio : int
     }
   [@@deriving sexp_of, compare, equal]
 
@@ -36,6 +53,8 @@ open Isa
     ; pins_out = 0
     ; pins_oe = 0
     ; uo_out = 0
+    ; prev_ui = 0
+    ; prev_uio = 0
     }
   ;;
 end 
@@ -52,6 +71,10 @@ let next_pc pc =
 
 let advance_pc (state : State.t) =
   { state with pc = next_pc state.pc }
+;;
+
+let bit value pin =
+  (value lsr Pin.to_int pin) land 1
 ;;
 
 (* --- General register helpers --- *)
@@ -71,6 +94,35 @@ let write_register register value (state : State.t) =
 
   | C ->
     { state with c = value }
+;;
+
+(* --- Input helpers --- *)
+
+let input_bank (inputs : Inputs.t) = function
+  | Input_bank.Ui -> inputs.ui_in
+  | Uio -> inputs.uio_in
+;;
+
+let previous_input_bank (state : State.t) = function
+  | Input_bank.Ui -> state.prev_ui
+  | Uio -> state.prev_uio
+;;
+
+let input_bit inputs bank pin =
+  bit (input_bank inputs bank) pin
+;;
+
+let previous_input_bit state bank pin =
+  bit (previous_input_bank state bank) pin
+;;
+
+(* --- Previous-input tracking --- *)
+
+let update_previous_inputs (inputs : Inputs.t) (state : State.t) =
+  { state with 
+  prev_ui = inputs.ui_in land 0xff
+  ; prev_uio = inputs.uio_in land 0xff
+  }
 ;;
 
 (* --- GPIO operation helper --- *)
@@ -127,4 +179,28 @@ let execute_set instruction (state : State.t) =
     state 
     |> write_gpio register new_value 
     |> advance_pc
+;;
+
+(* --- WAIT --- *)
+
+let wait_condition_holds (state : State.t) (inputs : Inputs.t) ({ pin; bank; condition } : Wait.t) =
+  let current =
+  input_bit inputs bank pin
+  in 
+  
+  let previous =
+    previous_input_bit state bank pin
+  in 
+
+  match condition with 
+  | Wait.Condition.Low -> current = 0
+  | High -> current = 1
+  | Rising -> previous = 0 && current = 1
+  | Falling -> previous = 1 && current = 0
+;;
+
+let execute_wait (wait : Wait.t) (inputs : Inputs.t) (state : State.t) =
+  if wait_condition_holds state inputs wait
+  then advance_pc state 
+  else state
 ;;

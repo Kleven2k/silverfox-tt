@@ -43,3 +43,217 @@ let%test_unit "PC wraps from 63 to 0" =
   let after = execute_set (Set.Reg { register = X; value = Byte.of_int_exn 1 }) before in
   [%test_result: State.t] after ~expect:{ before with x = 1; pc = 0 }
 ;;
+
+(* --- WAIT --- *)
+
+(* Success tests expect only the PC to advance; stall tests expect the state
+   to be completely unchanged. *)
+
+let%test_unit "WAIT LOW succeeds when pin is low" =
+  let wait =
+    { Wait.pin = Pin.of_int_exn 3
+    ; bank = Input_bank.Ui
+    ; condition = Wait.Condition.Low
+    }
+  in
+  let inputs =
+    { Inputs.ui_in = 0b0000
+    ; uio_in = 0
+    }
+  in
+  let before = State.reset in
+  let after = execute_wait wait inputs before in
+  [%test_result: State.t] after ~expect:{ before with pc = 1 }
+;;
+
+let%test_unit "WAIT LOW stalls while pin is high" =
+  let wait =
+    { Wait.pin = Pin.of_int_exn 3
+    ; bank = Input_bank.Ui
+    ; condition = Wait.Condition.Low
+    }
+  in
+  let inputs =
+    { Inputs.ui_in = 0b1000
+    ; uio_in = 0
+    }
+  in
+  let before = State.reset in
+  let after = execute_wait wait inputs before in
+  [%test_result: State.t] after ~expect:before
+;;
+
+let%test_unit "WAIT HIGH succeeds when pin is high" =
+  let wait =
+    { Wait.pin = Pin.of_int_exn 2
+    ; bank = Input_bank.Uio
+    ; condition = Wait.Condition.High
+    }
+  in
+  let inputs =
+    { Inputs.ui_in = 0
+    ; uio_in = 0b0100
+    }
+  in
+  let before = State.reset in
+  let after = execute_wait wait inputs before in
+  [%test_result: State.t] after ~expect:{ before with pc = 1 }
+;;
+
+let%test_unit "WAIT RISING detects 0 -> 1" =
+  let wait =
+    { Wait.pin = Pin.of_int_exn 0
+    ; bank = Input_bank.Ui
+    ; condition = Wait.Condition.Rising
+    }
+  in
+  let before =
+    { State.reset with
+      prev_ui = 0b0000
+    }
+  in
+  let inputs =
+    { Inputs.ui_in = 0b0001
+    ; uio_in = 0
+    }
+  in
+  let after = execute_wait wait inputs before in
+  [%test_result: State.t] after ~expect:{ before with pc = 1 }
+;;
+
+let%test_unit "WAIT RISING does not trigger on steady high" =
+  let wait =
+    { Wait.pin = Pin.of_int_exn 0
+    ; bank = Input_bank.Ui
+    ; condition = Wait.Condition.Rising
+    }
+  in
+  let before =
+    { State.reset with
+      prev_ui = 0b0001
+    }
+  in
+  let inputs =
+    { Inputs.ui_in = 0b0001
+    ; uio_in = 0
+    }
+  in
+  let after = execute_wait wait inputs before in
+  [%test_result: State.t] after ~expect:before
+;;
+
+let%test_unit "WAIT RISING does not trigger on 1 -> 0" =
+  let wait =
+    { Wait.pin = Pin.of_int_exn 0
+    ; bank = Input_bank.Ui
+    ; condition = Wait.Condition.Rising
+    }
+  in
+  let before =
+    { State.reset with
+      prev_ui = 0b0001
+    }
+  in
+  let inputs =
+    { Inputs.ui_in = 0b0000
+    ; uio_in = 0
+    }
+  in
+  let after = execute_wait wait inputs before in
+  [%test_result: State.t] after ~expect:before
+;;
+
+let%test_unit "WAIT FALLING detects 1 -> 0" =
+  let wait =
+    { Wait.pin = Pin.of_int_exn 5
+    ; bank = Input_bank.Uio
+    ; condition = Wait.Condition.Falling
+    }
+  in
+  let before =
+    { State.reset with
+      prev_uio = 0b0010_0000
+    }
+  in
+  let inputs =
+    { Inputs.ui_in = 0
+    ; uio_in = 0b0000_0000
+    }
+  in
+  let after = execute_wait wait inputs before in
+  [%test_result: State.t] after ~expect:{ before with pc = 1 }
+;;
+
+let%test_unit "WAIT FALLING does not trigger on steady low" =
+  let wait =
+    { Wait.pin = Pin.of_int_exn 5
+    ; bank = Input_bank.Uio
+    ; condition = Wait.Condition.Falling
+    }
+  in
+  let before =
+    { State.reset with
+      prev_uio = 0b0000_0000
+    }
+  in
+  let inputs =
+    { Inputs.ui_in = 0
+    ; uio_in = 0b0000_0000
+    }
+  in
+  (* The pin is low, so a FALLING that behaved like LOW would wrongly succeed. *)
+  let after = execute_wait wait inputs before in
+  [%test_result: State.t] after ~expect:before
+;;
+
+let%test_unit "WAIT only observes selected pin" =
+  let wait =
+    { Wait.pin = Pin.of_int_exn 3
+    ; bank = Input_bank.Ui
+    ; condition = Wait.Condition.High
+    }
+  in
+  let inputs =
+    { Inputs.ui_in = 0b0000_0100
+    ; uio_in = 0
+    }
+  in
+  (* pin2 is high, but we're waiting on pin3 *)
+  let before = State.reset in
+  let after = execute_wait wait inputs before in
+  [%test_result: State.t] after ~expect:before
+;;
+
+let%test_unit "WAIT distinguishes UI and UIO banks" =
+  let wait =
+    { Wait.pin = Pin.of_int_exn 0
+    ; bank = Input_bank.Uio
+    ; condition = Wait.Condition.High
+    }
+  in
+  let inputs =
+    { Inputs.ui_in = 0b0000_0001
+    ; uio_in = 0b0000_0000
+    }
+  in
+  (* UI pin0 is high, but WAIT is looking at UIO pin0. *)
+  let before = State.reset in
+  let after = execute_wait wait inputs before in
+  [%test_result: State.t] after ~expect:before
+;;
+
+let%test_unit "WAIT wraps PC after address 63" =
+  let wait =
+    { Wait.pin = Pin.of_int_exn 0
+    ; bank = Input_bank.Ui
+    ; condition = Wait.Condition.Low
+    }
+  in
+  let before =
+    { State.reset with
+      pc = 63
+    }
+  in
+  let after = execute_wait wait Inputs.zero before in
+  [%test_result: State.t] after ~expect:{ before with pc = 0 }
+;;
