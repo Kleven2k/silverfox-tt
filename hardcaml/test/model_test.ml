@@ -887,6 +887,304 @@ let%test_unit "C_NZ_DEC produces exactly 8 loop iterations" =
   [%test_result: int] jumps_taken ~expect:7
 ;;
 
+(* --- MOV --- *)
+
+let%test_unit "MOV X -> Y" =
+  let instruction = 
+    { Mov.destination = Mov.Destination.Y; source = Mov.Source.X }
+  in
+
+  let before = 
+    { State.reset with x = 0x55; y = 0xaa }
+  in
+
+  let after =
+    execute_mov instruction Inputs.zero before 
+  in
+
+  [%test_result: int] after.x ~expect:0x55;
+  [%test_result: int] after.y ~expect:0x55;
+  [%test_result: int] after.pc ~expect:1
+;;
+
+let%test_unit "MOV UI_IN -> X" =
+  let instruction =
+    { Mov.destination = Mov.Destination.X
+    ; source = Mov.Source.Ui_in
+    }
+  in
+
+  let inputs =
+    { Inputs.ui_in = 0xa5
+    ; uio_in = 0x00
+    }
+  in
+
+  let after =
+    execute_mov instruction inputs State.reset
+  in
+
+  [%test_result: int] after.x ~expect:0xa5
+;;
+
+let%test_unit "UIO_IN -> Y" =
+  let instruction = 
+    { Mov.destination = Mov.Destination.Y
+    ; source = Mov.Source.Uio_in
+    }
+  in
+
+  let inputs =
+    { Inputs.ui_in = 0
+    ; uio_in = 0x3c
+    }
+  in
+
+  let after =
+    execute_mov instruction inputs State.reset 
+  in
+
+  [%test_result: int] after.y ~expect:0x3c
+;;
+
+let%test_unit "MOV PINS_OUT -> X" =
+  let instruction =
+    { Mov.destination = Mov.Destination.X
+    ; source = Mov.Source.Pins_out
+    }
+  in
+
+  let before =
+    { State.reset with pins_out = 0x96 }
+  in
+
+  let after =
+    execute_mov instruction Inputs.zero before 
+  in
+
+  [%test_result: int] after.x ~expect:0x96
+;;
+
+let%test_unit "MOV X -> PINS_OUT" =
+  let instruction =
+    { Mov.destination = Mov.Destination.Pins_out 
+    ; source = Mov.Source.X
+    }
+  in
+
+  let before =
+    { State.reset with x = 0xc3 }
+  in
+
+  let after =
+    execute_mov instruction Inputs.zero before 
+  in
+
+  [%test_result: int] after.pins_out ~expect:0xc3
+;;
+
+let%test_unit "MOV X -> PINS_OE" =
+  let instruction =
+    { Mov.destination = Mov.Destination.Pins_oe
+    ; source = Mov.Source.X
+    }
+  in
+
+  let before = 
+    { State.reset with x = 0x0f }
+  in
+
+  let after = 
+    execute_mov instruction Inputs.zero before 
+  in
+
+  [%test_result: int] after.pins_oe ~expect:0x0f
+;;
+
+let%test_unit "MOV X -> UO_OUT" =
+  let instruction =
+    { Mov.destination = Mov.Destination.Uo_out
+    ; source = Mov.Source.X
+    }
+  in
+
+  let before =
+    { State.reset with x = 0x5a }
+  in
+
+  let after = 
+    execute_mov instruction Inputs.zero before 
+  in
+
+  [%test_result: int] after.uo_out ~expect:0x5a
+;;
+
+let%test_unit "MOV X -> X leaves X unchanged" =
+  let instruction =
+    { Mov.destination = Mov.Destination.X
+    ; source = Mov.Source.X
+    }
+  in
+
+  let before =
+    { State.reset with x = 0x42 }
+  in
+
+  let after =
+    execute_mov instruction Inputs.zero before 
+  in
+
+  [%test_result: int] after.x ~expect:0x42;
+  [%test_result: int] after.pc ~expect:1
+;;
+
+let%test_unit "MOV wraps PC" =
+  let instruction =
+    { Mov.destination = Mov.Destination.X
+    ; source = Mov.Source.Y 
+    }
+  in
+
+  let before =
+    { State.reset with pc = 63
+    ; y = 0x11
+    }
+  in
+
+  let after = 
+    execute_mov instruction Inputs.zero before 
+  in
+
+  [%test_result: int] after.x  ~expect:0x11;
+  [%test_result: int] after.pc ~expect:0
+;;
+
+(* --- DELAY --- *)
+
+let%test_unit "DELAY 1 completes immediately" =
+  let instruction =
+    { Delay.cycles = Delay_cycles.of_int_exn 1 }
+  in
+
+  let after =
+    execute_delay instruction State.reset
+  in
+
+  [%test_result: int] after.pc ~expect:1;
+  [%test_result: int] after.delay_remaining ~expect:0
+;;
+
+let%test_unit "DELAY 2 starts with one continuation cycle" =
+  let instruction =
+    { Delay.cycles = Delay_cycles.of_int_exn 2 }
+  in
+
+  let after_start =
+    execute_delay instruction State.reset
+  in
+
+  [%test_result: int] after_start.pc ~expect:0;
+  [%test_result: int] after_start.delay_remaining ~expect:1;
+
+  let after_finish =
+    continue_delay after_start
+  in
+
+  [%test_result: int] after_finish.pc ~expect:1;
+  [%test_result: int] after_finish.delay_remaining ~expect:0
+;;
+
+let%test_unit "DELAY 5 takes exactly five cycles" =
+  let instruction =
+    { Delay.cycles = Delay_cycles.of_int_exn 5 }
+  in
+
+  let s1 =
+    execute_delay instruction State.reset
+  in
+
+  [%test_result: int] s1.pc ~expect:0;
+  [%test_result: int] s1.delay_remaining ~expect:4;
+
+  let s2 = continue_delay s1 in
+  [%test_result: int] s2.pc ~expect:0;
+  [%test_result: int] s2.delay_remaining ~expect:3;
+
+  let s3 = continue_delay s2 in
+  [%test_result: int] s3.pc ~expect:0;
+  [%test_result: int] s3.delay_remaining ~expect:2;
+
+  let s4 = continue_delay s3 in
+  [%test_result: int] s4.pc ~expect:0;
+  [%test_result: int] s4.delay_remaining ~expect:1;
+
+  let s5 = continue_delay s4 in
+  [%test_result: int] s5.pc ~expect:1;
+  [%test_result: int] s5.delay_remaining ~expect:0
+;;
+
+let%test_unit "DELAY does not modify architectural data state" =
+  let instruction =
+    { Delay.cycles = Delay_cycles.of_int_exn 3 }
+  in
+
+  let before =
+    { State.reset with pc = 5
+    ; x = 0x12
+    ; y = 0x34
+    ; c = 8
+    ; pins_out = 0xaa
+    ; pins_oe = 0x55
+    ; uo_out = 0xf0
+    }
+  in
+
+  let after =
+    execute_delay instruction before 
+  in
+
+  [%test_result: int] after.pc ~expect:5;
+  [%test_result: int] after.x ~expect:0x12;
+  [%test_result: int] after.y ~expect:0x34;
+  [%test_result: int] after.c ~expect:8;
+  [%test_result: int] after.pins_out ~expect:0xaa;
+  [%test_result: int] after.pins_oe ~expect:0x55;
+  [%test_result: int] after.uo_out ~expect:0xf0;
+  [%test_result: int] after.delay_remaining ~expect:2
+;;
+
+let%test_unit "DELAY completion wraps PC" =
+  let instruction =
+    { Delay.cycles = Delay_cycles.of_int_exn 2 }
+  in
+
+  let before =
+    { State.reset with pc = 63 }
+  in
+
+  let s1 = 
+    execute_delay instruction before 
+  in
+
+  let s2 =
+    continue_delay s1 
+  in
+
+  [%test_result: int] s2.pc ~expect:0
+;;
+
+let%test_unit "DELAY 8192 accepted" =
+  let instruction =
+    { Delay.cycles = Delay_cycles.of_int_exn 8192 }
+  in
+
+  let after =
+    execute_delay instruction State.reset 
+  in
+
+  [%test_result: int] after.delay_remaining ~expect:8191
+;;
+
 (* --- SYS --- *)
 
 let%test_unit "SYS NOP advances PC" =
@@ -921,3 +1219,246 @@ let%test_unit "SYS HALT does not modify architectural state" =
   [%test_result: State.t] after
     ~expect:{ before with halt_reason = Some Halt_reason.Halt_instruction }
 ;; 
+
+(* --- Programs (step) --- *)
+
+let%test_unit "program: SET X then HALT" =
+  let program =
+    Program.of_instructions_exn
+      [ Instruction.Set 
+          (Set.Reg
+            { register = Register.X
+            ; value = Byte.of_int_exn 0x55
+            })
+      ; Instruction.Sys Sys.Halt
+      ]
+  in
+
+  let s0 = State.reset in
+
+  let s1 = step s0 ~program ~inputs:Inputs.zero in
+
+  [%test_result: int] s1.x ~expect:0x55;
+  [%test_result: int] s1.pc ~expect:1;
+  [%test_result: bool] (State.halted s1) ~expect:false;
+
+  let s2 = step s1 ~program ~inputs:Inputs.zero in
+
+  [%test_result: int] s2.pc ~expect:1;
+  [%test_result: bool] (State.halted s2) ~expect:true
+;;
+
+let%test_unit "program is stored as machine words" =
+  let instruction =
+    Instruction.Set 
+      (Set.Reg 
+        { register = Register.X
+        ; value = Byte.of_int_exn 0x55 
+        })
+  in
+
+  let program = Program.of_instructions_exn [ instruction ] in
+
+  [%test_result: Int.Hex.t] program.(0) ~expect:(Instruction.encode instruction);
+  [%test_result: Int.Hex.t] program.(1) ~expect:0xE000
+;;
+
+let%test_unit "illegal instruction halts core" =
+  let program = 
+    Program.of_words_exn
+      [ 0xE001 ]
+  in
+
+  let after = step State.reset ~program ~inputs:Inputs.zero in
+
+  [%test_result: int] after.pc ~expect:0;
+
+  match after.halt_reason with
+  | Some (Halt_reason.Illegal_instruction word) ->
+      [%test_result: Int.Hex.t] word ~expect:0xE001
+  | _ ->
+    failwith "Expected illegal instruction halt"
+;;
+
+let%test_unit "HALT remains halted" =
+  let program =
+    Program.of_instructions_exn
+      [ Instruction.Sys Sys.Halt
+      ; Instruction.Set
+          (Set.Reg
+            { register = Register.X
+            ; value = Byte.of_int_exn 0xff
+            })
+      ]
+  in
+
+  let s1 = 
+    step
+      State.reset 
+      ~program
+      ~inputs:Inputs.zero
+  in
+
+  let s2 =
+    step 
+      s1 
+      ~program 
+      ~inputs:Inputs.zero 
+  in
+
+  let s3 =
+    step
+      s2 
+      ~program 
+      ~inputs:Inputs.zero 
+  in
+
+  [%test_result: int] s3.pc ~expect:0;
+  [%test_result: int] s3.x ~expect:0;
+  [%test_result: bool] (State.halted s3) ~expect:true
+;;
+
+let%test_unit "program: DELAY 3 takes exactly three steps" =
+  let program =
+    Program.of_instructions_exn
+      [ Instruction.Delay
+          { cycles = Delay_cycles.of_int_exn 3
+          }
+      ; Instruction.Sys Sys.Halt
+      ]
+  in
+
+  let s0 = State.reset in
+
+  let s1 =
+    step s0 ~program ~inputs:Inputs.zero
+  in
+
+  [%test_result: int] s1.pc ~expect:0;
+  [%test_result: int] s1.delay_remaining ~expect:2;
+
+  let s2 =
+    step s1 ~program ~inputs:Inputs.zero
+  in
+
+  [%test_result: int] s2.pc ~expect:0;
+  [%test_result: int] s2.delay_remaining ~expect:1;
+
+  let s3 =
+    step s2 ~program ~inputs:Inputs.zero
+  in
+
+  [%test_result: int] s3.pc ~expect:1;
+  [%test_result: int] s3.delay_remaining ~expect:0
+;;
+
+
+let%test_unit "program: WAIT FALL sees an edge across steps" =
+  (* Checks that [step] keeps the previous input sample up to date: the edge
+     is between step 1 (pin high) and step 2 (pin low). *)
+  let program =
+    Program.of_instructions_exn
+      [ Instruction.Wait
+          { pin = Pin.of_int_exn 0; bank = Input_bank.Ui; condition = Falling }
+      ; Instruction.Sys Sys.Halt
+      ]
+  in
+  let pin_by_cycle = [| 1; 1; 0; 0 |] in
+  let states =
+    run
+      State.reset
+      ~program
+      ~cycles:(Array.length pin_by_cycle)
+      ~inputs:(fun cycle -> { Inputs.ui_in = pin_by_cycle.(cycle); uio_in = 0 })
+  in
+  (* states.(i) is the state after cycle i - 1; states.(0) is the start. *)
+  let pcs = List.map states ~f:(fun (s : State.t) -> s.pc) in
+  [%test_result: int list] pcs ~expect:[ 0; 0; 0; 1; 1 ]
+;;
+
+let%test_unit "program: an edge during DELAY is not seen by a later WAIT" =
+  (* The previous sample is updated every cycle, including during DELAY. So a
+     WAIT only sees an edge that happens while it is waiting: here the pin
+     falls during the DELAY and stays low, and the WAIT never completes. *)
+  let program =
+    Program.of_instructions_exn
+      [ Instruction.Delay { cycles = Delay_cycles.of_int_exn 3 }
+      ; Instruction.Wait
+          { pin = Pin.of_int_exn 0; bank = Input_bank.Ui; condition = Falling }
+      ; Instruction.Sys Sys.Halt
+      ]
+  in
+  let states =
+    run
+      State.reset
+      ~program
+      ~cycles:10
+      ~inputs:(fun cycle ->
+        { Inputs.ui_in = (if cycle = 0 then 1 else 0); uio_in = 0 })
+  in
+  let final = List.last_exn states in
+  [%test_result: int] final.pc ~expect:1;
+  [%test_result: bool] (State.halted final) ~expect:false
+;;
+
+let%test_unit "program: UART TX sends 0x55 with exactly P cycles per bit" =
+  (* 8-N-1 frame on uo_out[0]. Every bit must last exactly [period] cycles,
+     so each DELAY subtracts the cost of the other instructions in its bit
+     (docs/isa.md section 7). 0x55 sent LSB-first plus start/stop bits gives
+     0,1,0,1,0,1,0,1,0,1: the line changes at every bit boundary, so a timing
+     error of even one cycle puts a wrong value inside some bit window. *)
+  let period = 10 in
+  let byte = 0x55 in
+  let uo_out mask operation =
+    Instruction.Set
+      (Set.Gpio
+         { register = Gpio_register.Uo_out; operation; mask = Byte.of_int_exn mask })
+  in
+  let set register value =
+    Instruction.Set (Set.Reg { register; value = Byte.of_int_exn value })
+  in
+  let delay n = Instruction.Delay { cycles = Delay_cycles.of_int_exn n } in
+  let program =
+    Program.of_instructions_exn
+      [ (* 0 *) uo_out 0x01 Write                  (* line idle high *)
+      ; (* 1 *) set X byte
+      ; (* 2 *) set C 8
+      ; (* 3 *) uo_out 0x01 Clear_bits             (* start bit: 1 cycle *)
+      ; (* 4 *) delay (period - 1)                 (*   + period - 1     *)
+      ; (* 5 *) Instruction.Out                    (* data bit:  1 cycle *)
+                  { target = Out.Uo { pin = Pin.of_int_exn 0 }
+                  ; source = Shift_register.X
+                  ; order = Shift_order.Lsb_first
+                  }
+      ; (* 6 *) delay (period - 2)                 (*   + period - 2     *)
+      ; (* 7 *) Instruction.Jmp                    (*   + 1              *)
+                  (Jmp.C_nz_dec { target = Target.of_int_exn 5 })
+      ; (* 8 *) uo_out 0x01 Set_bits               (* stop bit:  1 cycle *)
+      ; (* 9 *) delay (period - 1)                 (*   + period - 1     *)
+      ; (* 10 *) Instruction.Sys Sys.Halt
+      ]
+  in
+  let states =
+    run State.reset ~program ~cycles:(4 + (11 * period)) ~inputs:(fun _ -> Inputs.zero)
+  in
+  let tx = Array.of_list (List.map states ~f:(fun (s : State.t) -> s.uo_out land 1)) in
+  (* The start bit is driven by cycle 3, so it is visible from states.(4). *)
+  let frame_start = 4 in
+  let expected_bits =
+    [ 0 ] @ List.init 8 ~f:(fun i -> (byte lsr i) land 1) @ [ 1 ]
+  in
+  List.iteri expected_bits ~f:(fun bit_index expected ->
+    for offset = 0 to period - 1 do
+      let index = frame_start + (bit_index * period) + offset in
+      if tx.(index) <> expected
+      then
+        raise_s
+          [%message
+            "wrong TX level"
+              (bit_index : int)
+              (offset : int)
+              (expected : int)
+              ~got:(tx.(index) : int)]
+    done);
+  [%test_result: bool] (State.halted (List.last_exn states)) ~expect:true
+;;

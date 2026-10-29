@@ -369,3 +369,72 @@ Next: bring docs/isa.md up to date with every instruction's bit layout, then
 write a pure OCaml reference model (a step function over PC, X, Y, C, pins and
 the delay counter) that defines what each instruction does, as the oracle for
 lockstep testing of the Hardcaml RTL core.
+
+## 18-10-2026 - The PC wraps from 63 to 0
+Writing the reference model (hardcaml/lib/model/model.ml) forced an answer
+to an open question in docs/isa.md: what happens when the PC passes the last
+program word. Decision: it wraps to 0 (`next_pc = (pc + 1) mod 64`).
+
+Why: a 6-bit counter wraps by itself, so this costs no hardware, while
+"halt at the end" would need extra detection logic and a special case in the
+core. It is also rarely reached: unused program words reset to HALT
+(0xE000), so a program shorter than 64 words that runs past its end hits a
+HALT, not the wrap. Only a full 64-word program without a final HALT or jump
+wraps, and then it restarts from address 0 -- a program bug, but a
+predictable one. RP2040 PIO also wraps around its instruction memory.
+
+Recorded in docs/isa.md section 2 (Program counter) and removed from the open
+questions; checked by the model test "PC wraps from 63 to 0".
+
+## 29-10-2026 - Reference model complete; four semantics decisions it forced
+hardcaml/lib/model/model.ml is a pure OCaml model of the v0.3 ISA: a State
+record, program memory initialised to HALT, one execute function per
+instruction, and `step`, which advances exactly one clock cycle. `run`
+repeats `step` and returns every intermediate state. It uses Isa.decode, so
+the model executes the same machine words the hardware will. 75 tests in
+hardcaml/test/model_test.ml: per-instruction semantics, plus whole programs
+run through `step`, including an 8-N-1 UART transmit of 0x55 that checks
+every bit lasts exactly P cycles (making one data bit a cycle too long, the
+old delay-loop bug, fails this test at bit 2).
+
+Writing `step` forced answers to four open questions in docs/isa.md:
+
+1. Illegal words halt the core. The PC stays on the word and the halt reason
+   records Illegal_instruction with the word, distinct from a HALT
+   instruction. Failures are visible and the cause is inspectable, rather
+   than silently running on as a NOP.
+2. The previous input sample (used by RISE/FALL WAITs) is updated at the end
+   of every cycle, whatever is executing, including during DELAY and while
+   halted. Consequence, now documented and tested: an edge WAIT only sees an
+   edge that happens while it is waiting. Simple to implement and to reason
+   about; programs wait for edges while the line is still idle, which is
+   what protocol receivers do anyway.
+3. The ISA and the model are defined on synchronized inputs. The hardware's
+   2-flop input synchronizer adds a fixed latency; that is an RTL detail,
+   still listed as open in isa.md, to be documented and accounted for when
+   comparing the RTL against the model.
+4. A WAIT whose condition already holds costs exactly 1 cycle.
+
+Also: `step` on a halted core changes nothing except the previous input
+samples, and a running DELAY continues before anything is fetched.
+
+Test-design lessons from this phase, all from bugs or near-misses:
+- Choose inputs where the plausible bug gives a different answer: 0xA5 is a
+  binary palindrome and could not detect a swapped bit order (0xB2 can);
+  SET_BITS and TOGGLE_BITS give the same result unless the mask covers a bit
+  that is already 1; WAIT/IN tests set the other pins and the other bank to
+  the opposite value.
+- Compare the whole state, not single fields, so an instruction changing
+  something it should not is caught.
+- A test that does not compile does not test anything: MOV UI_IN read the
+  UIO bank from the start, and was only caught once its test compiled.
+
+AI use in this phase: I wrote model.ml and most of its tests. Claude
+reviewed each step, explained OCaml errors (argument order, labelled
+arguments, record vs variant syntax), suggested test values that tell
+plausible bugs apart, and fixed argument-order inconsistencies on request.
+Claude also wrote the three whole-program tests above (edge detection across
+steps, an edge missed during DELAY, and UART TX timing) and the
+documentation updates for these decisions.
+
+Next: the Hardcaml RTL core, tested in lockstep against this model.

@@ -79,6 +79,14 @@ Programs read inputs from the `ui_in` (input-only) and `uio_in`
 (bidirectional) pin banks. Pins reserved for the host interface are masked
 off by the top-level wrapper, so programs never see or drive them.
 
+### Program counter
+
+`PC + 1` in the instruction semantics is always taken modulo 64: after
+address 63 the PC wraps to 0. A 6-bit counter does this on its own, so it
+costs no extra hardware. Because unused program words reset to HALT, only
+a program that fills all 64 words without ending in a HALT or jump ever
+reaches the wrap, and then it restarts from address 0.
+
 ### Reset state
 
 On reset (`rst_n` low):
@@ -340,11 +348,17 @@ input sample with the previous one, which the machine keeps internally
 (see section 2). A WAIT whose condition already holds completes in one
 cycle.
 
+The previous sample is updated at the end of **every** cycle, whatever
+instruction is running, including during a DELAY and while the core is
+halted. A RISE or FALL WAIT therefore only sees an edge that happens while
+it is waiting: if the pin changes during the instruction before the WAIT
+(for example during a DELAY) and then stays at its new level, the edge is
+not seen. Programs should start waiting for an edge while the line is still
+at its idle level, as a UART receiver does.
+
 **Rules:**
 
 - Bits 9..3 are reserved and must be zero.
-- How the input synchronizer's latency and the previous-sample register
-  behave exactly is still open (see section 9).
 
 **Example:**
 
@@ -863,8 +877,10 @@ an instruction that re-encodes to exactly that word. There are 14,674 legal
 words, the same as the number of legal instructions, so the encoding is
 one-to-one.
 
-What the hardware does when it fetches an illegal word is not decided yet
-(see section 9).
+When the core fetches an illegal word, it halts. The PC stays on the
+illegal word, no other state changes, and the halt reason records
+"illegal instruction" together with the word, so the host can tell this
+apart from a HALT instruction.
 
 ## 7. Timing
 
@@ -903,13 +919,12 @@ in this document has been executed and checked.
 
 Not decided yet; to be resolved before declaring the ISA stable:
 
-- Input synchronizer latency, and how it shows up in WAIT, IN and pin JMP.
-- Whether WAIT's previous-sample register updates during DELAY (an edge
-  during a DELAY could otherwise be missed or caught).
+- Input synchronizer latency in the hardware. The ISA (and the reference
+  model) is defined on synchronized inputs; the RTL's synchronizer adds a
+  fixed delay before a pin change reaches WAIT, IN, MOV and pin JMP, which
+  must be documented and accounted for when comparing the RTL with the
+  model.
 - On which cycle a registered output becomes visible on the pin.
-- What the hardware does when it fetches an illegal instruction word.
-- What happens when the PC passes address 63 (wrap to 0, or halt).
-- The minimum WAIT cost when the condition already holds (assumed 1 cycle).
 - The host data path: how the host passes bytes into and out of the core.
 - Assembly syntax details, such as the names of the SET operations.
 

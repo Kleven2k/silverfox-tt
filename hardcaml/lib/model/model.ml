@@ -3,13 +3,21 @@ open Isa
 
 (*
  * Silverfox architectural reference model.
- * 
+ *
  * Written in plain OCaml. Deliberately no Hardcaml.
  *
  * The model operates one core clock cycle at a time:
  *
- *   step :
-*)
+ *   step : State.t -> program:Program.t -> inputs:Inputs.t -> State.t
+ *
+ * Each call advances exactly one cycle: a halted core does nothing, a running
+ * DELAY counts down, otherwise the word at PC is fetched, decoded and
+ * executed (an illegal word halts the core). The previous input samples used
+ * by edge WAITs are updated at the end of every cycle.
+ *
+ * Inputs are the synchronized pin values; the hardware's input synchronizer
+ * latency is an implementation detail outside this model.
+ *)
 
 (* --- Halt reason --- *)
 
@@ -50,6 +58,7 @@ module State = struct
     ; prev_ui : int
     ; prev_uio : int
     ; halt_reason : Halt_reason.t option 
+    ; delay_remaining : int 
     }
   [@@deriving sexp_of, compare, equal]
 
@@ -64,6 +73,7 @@ module State = struct
     ; prev_ui = 0
     ; prev_uio = 0
     ; halt_reason = None 
+    ; delay_remaining = 0
     }
   ;;
 
@@ -71,6 +81,63 @@ module State = struct
     Option.is_some t.halt_reason
   ;;
 end 
+
+(* --- Program memory --- *)
+
+module Program = struct 
+  type t = int array 
+
+  (*
+   * SYS.HALT = 0xE000.
+   *
+   * Program memory therefore defaults to HALT so that unused memory fails
+   * safely rather than executing NOPs and wrapping around.
+  *)
+  let halt_word =
+    Instruction.encode (Instruction.Sys Sys.Halt)
+  ;;
+
+  let empty () =
+    Array.create 
+     ~len:Arch.program_words
+     halt_word
+  ;;
+
+  let of_words_exn words =
+    if List.length words > Arch.program_words
+    then 
+      invalid_argf
+      "Program contains %d words; maximum is %d"
+      (List.length words)
+      Arch.program_words
+      ();
+  
+  let program = empty () in
+
+  List.iteri words ~f:(fun address word ->
+    if word < 0 || word > 0xffff
+    then
+      invalid_argf
+        "Program word 0x%X is not a 16-bit value"
+        word
+        ();
+        
+      program.(address) <- word);
+
+    program
+  ;;
+
+  let of_instructions_exn instructions =
+    instructions
+    |> List.map ~f:Instruction.encode
+    |> of_words_exn
+  ;;
+
+  let fetch t pc =
+    t.(pc)
+  ;;
+end
+
 
 (* --- Basic helpers --- *)
 
@@ -104,10 +171,11 @@ let bit value pin =
 
 (* --- General register helpers --- *)
 
-let read_register (state : State.t) = function 
-  | Register .X -> state.x 
-  | Y -> state.y 
-  | C -> state.c 
+let read_register register (state : State.t) =
+  match register with
+  | Register.X -> state.x
+  | Y -> state.y
+  | C -> state.c
 ;;
 
 (* Convention: functions that update the state take it as their LAST
@@ -348,7 +416,7 @@ let execute_out ({ target; source; order } : Out.t) (state : State.t) =
          * 
          *  release the line
          *
-         * PINS_OUT itself does not matter whole OE=0.
+         * PINS_OUT itself does not matter while OE=0.
         *)
         let pins_oe =
           write_bit 
@@ -372,7 +440,7 @@ let execute_jmp (jump : Jmp.t) (inputs : Inputs.t) (state : State.t) =
   | Jmp.Always { target } ->
     { state with pc = Target.to_int target }
   | If_zero { register; target } ->
-    if read_register state register = 0 
+    if read_register register state = 0 
     then 
       { state with pc = Target.to_int target }
     else
@@ -409,6 +477,81 @@ let execute_jmp (jump : Jmp.t) (inputs : Inputs.t) (state : State.t) =
       advance_pc state 
 ;;
 
+(* --- MOV --- *)
+
+let read_mov_source (source : Mov.Source.t) (inputs : Inputs.t) (state : State.t) =
+  match source with 
+  | Mov.Source.X ->
+    state.x 
+  | Y ->
+    state.y
+  | C -> 
+    state.c 
+  | Ui_in ->
+    inputs.ui_in land 0xff
+  | Uio_in ->
+    inputs.uio_in land 0xff
+  | Pins_out ->
+    state.pins_out
+  | Pins_oe ->
+    state.pins_oe
+  | Uo_out ->
+    state.uo_out
+;;
+
+let write_mov_destination (destination : Mov.Destination.t) value (state : State.t) =
+  let value = mask8 value in 
+  match destination with 
+  | Mov.Destination.X ->
+    { state with x = value }
+  | Y ->
+    { state with y = value }
+  | C ->
+    { state with c = value }
+  | Pins_out ->
+    { state with pins_out = value }
+  | Pins_oe ->
+    { state with pins_oe = value }
+  | Uo_out ->
+    { state with uo_out = value }
+;;
+
+let execute_mov ({ destination; source } : Mov.t) (inputs : Inputs.t) (state : State.t) =
+  let value =
+    read_mov_source source inputs state
+  in
+
+  state 
+  |> write_mov_destination destination value
+  |> advance_pc
+;;
+
+(* --- DELAY --- *)
+
+let execute_delay ({ cycles } : Delay.t) (state : State.t) =
+  let cycles =
+    Delay_cycles.to_int cycles 
+  in
+
+  if cycles = 1
+  then
+    advance_pc state 
+  else
+    { state with delay_remaining = cycles - 1 }
+;; 
+
+let continue_delay (state : State.t) =
+  if state.delay_remaining <= 0
+  then 
+  invalid_arg "continue_delay called without active DELAY";
+
+  if state.delay_remaining = 1
+  then 
+    { state with delay_remaining = 0; pc = next_pc state.pc }
+  else
+    { state with delay_remaining = state.delay_remaining - 1 }
+;;
+
 (* --- SYS --- *)
 
 let execute_sys (sys : Sys.t) (state : State.t) =
@@ -422,4 +565,111 @@ let execute_sys (sys : Sys.t) (state : State.t) =
     { state with 
       halt_reason = Some Halt_reason.Halt_instruction
     }
+;;
+
+(* --- Instruction execution --- *)
+
+let execute_instruction (instruction : Instruction.t) ~(inputs : Inputs.t) (state : State.t) =
+  match instruction with
+  | Instruction.Set instruction ->
+    execute_set instruction state
+  | Wait instruction ->
+    execute_wait instruction inputs state 
+  | In instruction ->
+    execute_in instruction inputs state 
+  | Out instruction ->
+    execute_out instruction state 
+  | Jmp instruction ->
+    execute_jmp instruction inputs state 
+  | Mov instruction ->
+    execute_mov instruction inputs state 
+  | Delay instruction ->
+    execute_delay instruction state 
+  | Sys instruction ->
+    execute_sys instruction state 
+;;
+
+(* --- One model clock cycle --- *)
+
+let step (state : State.t) ~(program : Program.t) ~(inputs : Inputs.t) =
+  let inputs =
+    { Inputs.ui_in = inputs.ui_in land 0xff 
+    ; uio_in = inputs.uio_in land 0xff
+    }
+  in
+
+  let next_state =
+    if State.halted state 
+    then 
+      state 
+    else if state.delay_remaining > 0
+    then
+      continue_delay state 
+
+    else (
+      let word =
+        Program.fetch program state.pc 
+      in
+
+      match Instruction.decode word with 
+      | Ok instruction ->
+        execute_instruction
+          instruction
+          ~inputs
+          state
+      | Error _ ->
+        { state with 
+          halt_reason = 
+            Some 
+              (Halt_reason.Illegal_instruction word)
+        })
+  in
+  
+  update_previous_inputs
+    inputs
+    next_state
+;;
+
+(* --- Run helper --- *)
+
+let run initial_state ~(program : Program.t) ~cycles ~inputs =
+  if cycles < 0
+  then 
+    invalid_argf
+      "Cannot run Silverfox model for %d cycles"
+      cycles 
+      ();
+  
+  (*
+   * The result includes the initial state.
+   *
+   * For cycles = 3:
+   *
+   *    result[0] = state before cycle 0
+   *    result[1] = state after cycle 0
+   *    result[2] = state after cycle 1
+   *    result[3] = state after cycle 2
+  *)
+  let rec loop cycle state states_rev =
+    if cycle = cycles 
+    then 
+      List.rev states_rev 
+    else (
+      let next =
+        step 
+          state 
+          ~program
+          ~inputs:(inputs cycle)
+      in
+
+      loop 
+        (cycle + 1)
+        next 
+        (next :: states_rev))
+  in
+
+  loop
+    0
+    initial_state
+    [ initial_state ]
 ;;
