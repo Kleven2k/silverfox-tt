@@ -73,6 +73,18 @@ let advance_pc (state : State.t) =
   { state with pc = next_pc state.pc }
 ;;
 
+let pin_mask pin =
+  1 lsl Pin.to_int pin 
+;;
+
+let write_bit value pin new_bit =
+  let mask = pin_mask pin in 
+
+  if new_bit = 0
+  then mask8 (value land lnot mask)
+  else mask8 (value lor mask)
+;;
+
 let bit value pin =
   (value lsr Pin.to_int pin) land 1
 ;;
@@ -237,5 +249,99 @@ let execute_in ({ pin; bank; destination; order } : In.t) (inputs : Inputs.t) (s
 
   state 
   |> write_shift_register destination new_value
+  |> advance_pc
+;;
+
+(* --- OUT --- *)
+
+let output_bit value = function
+  | Shift_order.Lsb_first ->
+    value land 1
+  | Msb_first ->
+    (value lsr 7) land 1 
+;;
+
+let shift_after_output value = function 
+  | Shift_order.Lsb_first ->
+    value lsr 1
+  | Msb_first -> 
+    mask8 (value lsl 1)
+;;
+
+let execute_out (state : State.t) ({ target; source; order } : Out.t) =
+  let old_value = read_shift_register source state in
+  let outgoing_bit = output_bit old_value order in
+  let shifted_value = shift_after_output old_value order in
+
+  let state = 
+    match target with 
+    | Out.Uo { pin } ->
+      let uo_out =
+        write_bit
+          state.uo_out
+          pin 
+          outgoing_bit
+      in
+      { state with uo_out }
+    
+    | Uio { pin; mode = Out.Mode.Push_pull } -> 
+      (*
+       * Push-pull OUT writes only PINS_OUT.
+       *
+       * It deliberately leaves PINS_OE untouched.
+      *)
+      let pins_out =
+        write_bit
+          state.pins_out 
+          pin 
+          outgoing_bit
+      in
+      { state with pins_out }
+    
+    | Uio { pin; mode = Out.Mode.Open_drain } -> 
+      if outgoing_bit = 0
+      then (
+        (*
+        * Open-drain zero:
+        *
+        *  drive 0
+        *)
+        let pins_out =
+          write_bit
+            state.pins_out
+            pin 
+            0
+        in
+
+        let pins_oe = 
+          write_bit 
+            state.pins_oe
+            pin 
+            1 
+        in
+
+        { state with pins_out 
+        ; pins_oe 
+        })
+      else (
+        (*
+         * Open-drain one:
+         * 
+         *  release the line
+         *
+         * PINS_OUT itself does not matter whole OE=0.
+        *)
+        let pins_oe =
+          write_bit 
+            state.pins_oe
+            pin 
+            0
+        in
+      
+        { state with pins_oe })
+  in
+
+  state 
+  |> write_shift_register source shifted_value 
   |> advance_pc
 ;;

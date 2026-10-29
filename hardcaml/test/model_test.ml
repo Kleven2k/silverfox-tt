@@ -448,3 +448,179 @@ let%test_unit "IN reconstructs an LSB-first byte" =
   in
   [%test_result: int] final_state.x ~expect:0xB2
 ;;
+
+(* --- OUT --- *)
+
+let%test_unit "OUT UO LSB-first outputs X[0]" =
+  let instruction =
+    { Out.target = Uo { pin = Pin.of_int_exn 0 }
+    ; source = Shift_register.X
+    ; order = Shift_order.Lsb_first
+    }
+  in
+
+  let before =
+    { State.reset with 
+      x = 0b1010_0101
+    }
+  in
+
+  let after = execute_out before instruction in
+  [%test_result: int] after.uo_out ~expect:0b0000_0001;
+  [%test_result: int] after.x ~expect:0b0101_0010;
+  [%test_result: int] after.pc ~expect:1
+;;
+
+let%test_unit "OUT only modifies selected UO pin" =
+  let instruction =
+    { Out.target = Uo { pin = Pin.of_int_exn 3 }
+    ; source = Shift_register.X
+    ; order = Shift_order.Lsb_first
+    }
+  in
+
+  let before = 
+    { State.reset with x = 1
+    ; uo_out = 0b1010_0000
+    }
+  in
+
+  let after = execute_out before instruction in 
+  [%test_result: int] after.uo_out ~expect:0b1010_1000
+;;
+
+let%test_unit "OUT can clear selected UO pin" =
+  let instruction = 
+    { Out.target = Uo { pin = Pin.of_int_exn 2 }
+    ; source = Shift_register.X
+    ; order = Shift_order.Lsb_first
+    }
+  in
+
+  let before =
+    { State.reset with x = 0
+    ; uo_out = 0b1111_1111 
+    }
+  in
+
+  let after = execute_out before instruction in 
+  [%test_result: int] after.uo_out ~expect:0b1111_1011
+;;
+
+let%test_unit "OUT MSB-first outputs bit 7 and shifts left" =
+  let instruction = 
+    { Out.target = Uo { pin = Pin.of_int_exn 0 }
+    ; source = Shift_register.X
+    ; order = Shift_order.Msb_first
+    }
+  in
+
+  let before =
+    { State.reset with x = 0b1010_0101 }
+  in
+
+  let after = execute_out before instruction in
+  [%test_result: int] after.uo_out ~expect:1;
+  [%test_result: int] after.x ~expect:0b0100_1010
+;;
+
+let%test_unit "OUT can use Y without modifying X" =
+  let instruction =
+    { Out.target = Uo { pin = Pin.of_int_exn 0 }
+    ; source = Shift_register.Y
+    ; order = Shift_order.Lsb_first
+    }
+  in
+
+  let before =
+    { State.reset with x = 0x55
+    ; y = 0x03
+    }
+  in
+
+  let after = execute_out before instruction in
+  [%test_result: int] after.x ~expect:0x55;
+  [%test_result: int] after.y ~expect:0x01;
+  [%test_result: int] after.uo_out ~expect:1
+;;
+
+let%test_unit "OUT UIO push-pull writes PINS_OUT" =
+  let instruction =
+    { Out.target = Uio { pin = Pin.of_int_exn 2; mode = Out.Mode.Push_pull }
+    ; source = Shift_register.X
+    ; order = Shift_order.Lsb_first
+    }
+  in
+
+  let before =
+    { State.reset with x = 1 }
+  in
+
+  let after = execute_out before instruction in
+  [%test_result: int] after.pins_out ~expect:0b0000_0100
+;;
+
+let%test_unit "OUT UIO push-pull does not change PINS_OE" =
+  let instruction = 
+    { Out.target = Uio { pin = Pin.of_int_exn 2; mode = Out.Mode.Push_pull }
+    ; source = Shift_register.X
+    ; order = Shift_order.Lsb_first
+    }
+  in
+
+  let before = 
+    { State.reset with x = 1; pins_oe = 0b1010_1010 }
+  in
+
+  let after = execute_out before instruction in
+  [%test_result: int] after.pins_oe ~expect:0b1010_1010
+;;
+
+let%test_unit "OUT open-drain zero actively drives low" =
+  let instruction =
+    { Out.target = Uio { pin = Pin.of_int_exn 1; mode = Out.Mode.Open_drain }
+    ; source = Shift_register.X
+    ; order = Shift_order.Lsb_first
+    }
+  in
+
+  let before = 
+    {State.reset with x = 0
+    ; pins_out = 0xff
+    ; pins_oe = 0 
+    }
+  in
+  
+  let after = execute_out before instruction in
+  [%test_result: int] after.pins_out ~expect:0b1111_1101;
+  [%test_result: int] after.pins_oe ~expect:0b0000_0010
+;;
+
+let%test_unit "OUT open-drain one releases pin" =
+  let instruction =
+    { Out.target = Uio { pin = Pin.of_int_exn 1; mode = Out.Mode.Open_drain }
+    ; source = Shift_register.X
+    ; order = Shift_order.Lsb_first
+    }
+  in
+
+  let before = 
+    { State.reset with x = 1; pins_out = 0; pins_oe = 0xff }
+  in
+
+  let after = execute_out before instruction in
+  [%test_result: int] after.pins_oe ~expect:0b1111_1101
+;;
+
+let%test_unit "OUT wraps PC at end of program memory" = 
+  let instruction =
+    { Out.target = Uo { pin = Pin.of_int_exn 0 }; source = Shift_register.X; order = Shift_order.Lsb_first }
+  in
+
+  let before = 
+    { State.reset with pc = 63 }
+  in
+
+  let after = execute_out before instruction in
+  [%test_result: int] after.pc ~expect:0
+;;
