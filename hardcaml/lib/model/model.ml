@@ -13,6 +13,13 @@ open Isa
 
 (* --- Halt reason --- *)
 
+module Halt_reason = struct 
+  type t =
+    | Halt_instruction 
+    | Illegal_instruction of int 
+  [@@deriving sexp_of, compare, equal]
+end 
+
 (* --- Inputs --- *)
 
 module Inputs = struct
@@ -42,6 +49,7 @@ module State = struct
     ; uo_out : int
     ; prev_ui : int
     ; prev_uio : int
+    ; halt_reason : Halt_reason.t option 
     }
   [@@deriving sexp_of, compare, equal]
 
@@ -55,7 +63,12 @@ module State = struct
     ; uo_out = 0
     ; prev_ui = 0
     ; prev_uio = 0
+    ; halt_reason = None 
     }
+  ;;
+
+  let halted t =
+    Option.is_some t.halt_reason
   ;;
 end 
 
@@ -90,6 +103,12 @@ let bit value pin =
 ;;
 
 (* --- General register helpers --- *)
+
+let read_register (state : State.t) = function 
+  | Register .X -> state.x 
+  | Y -> state.y 
+  | C -> state.c 
+;;
 
 (* Convention: functions that update the state take it as their LAST
    argument, so updates chain with [|>], e.g.
@@ -268,7 +287,7 @@ let shift_after_output value = function
     mask8 (value lsl 1)
 ;;
 
-let execute_out (state : State.t) ({ target; source; order } : Out.t) =
+let execute_out ({ target; source; order } : Out.t) (state : State.t) =
   let old_value = read_shift_register source state in
   let outgoing_bit = output_bit old_value order in
   let shifted_value = shift_after_output old_value order in
@@ -344,4 +363,63 @@ let execute_out (state : State.t) ({ target; source; order } : Out.t) =
   state 
   |> write_shift_register source shifted_value 
   |> advance_pc
+;;
+
+(* --- JMP --- *)
+
+let execute_jmp (jump : Jmp.t) (inputs : Inputs.t) (state : State.t) =
+  match jump with 
+  | Jmp.Always { target } ->
+    { state with pc = Target.to_int target }
+  | If_zero { register; target } ->
+    if read_register state register = 0 
+    then 
+      { state with pc = Target.to_int target }
+    else
+      advance_pc state 
+  | C_nz_dec { target } ->
+    if state.c = 0
+    then
+      (* No underflow. C stays 0. *)
+      advance_pc state 
+    else (
+      let c = state.c - 1 in 
+
+      if c <> 0
+      then
+        { state with c; pc = Target.to_int target }
+      else
+        { (advance_pc state) with c }
+    ) 
+  | If_pin { level; bank; pin; target } ->
+    let actual = 
+      input_bit inputs bank pin 
+    in
+
+    let expected =
+      match level with 
+      | Level.Low -> 0
+      | High -> 1
+    in
+
+    if actual = expected
+    then
+      { state with pc = Target.to_int target }
+    else
+      advance_pc state 
+;;
+
+(* --- SYS --- *)
+
+let execute_sys (sys : Sys.t) (state : State.t) =
+  match sys with
+  | Sys.Nop ->
+    advance_pc state 
+  | Halt ->
+    (*
+     * PC intentionally remains on the HALT instruction.
+    *)
+    { state with 
+      halt_reason = Some Halt_reason.Halt_instruction
+    }
 ;;

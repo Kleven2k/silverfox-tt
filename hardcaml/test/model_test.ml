@@ -465,7 +465,7 @@ let%test_unit "OUT UO LSB-first outputs X[0]" =
     }
   in
 
-  let after = execute_out before instruction in
+  let after = execute_out instruction before in
   [%test_result: int] after.uo_out ~expect:0b0000_0001;
   [%test_result: int] after.x ~expect:0b0101_0010;
   [%test_result: int] after.pc ~expect:1
@@ -485,7 +485,7 @@ let%test_unit "OUT only modifies selected UO pin" =
     }
   in
 
-  let after = execute_out before instruction in 
+  let after = execute_out instruction before in 
   [%test_result: int] after.uo_out ~expect:0b1010_1000
 ;;
 
@@ -503,7 +503,7 @@ let%test_unit "OUT can clear selected UO pin" =
     }
   in
 
-  let after = execute_out before instruction in 
+  let after = execute_out instruction before in 
   [%test_result: int] after.uo_out ~expect:0b1111_1011
 ;;
 
@@ -519,7 +519,7 @@ let%test_unit "OUT MSB-first outputs bit 7 and shifts left" =
     { State.reset with x = 0b1010_0101 }
   in
 
-  let after = execute_out before instruction in
+  let after = execute_out instruction before in
   [%test_result: int] after.uo_out ~expect:1;
   [%test_result: int] after.x ~expect:0b0100_1010
 ;;
@@ -538,7 +538,7 @@ let%test_unit "OUT can use Y without modifying X" =
     }
   in
 
-  let after = execute_out before instruction in
+  let after = execute_out instruction before in
   [%test_result: int] after.x ~expect:0x55;
   [%test_result: int] after.y ~expect:0x01;
   [%test_result: int] after.uo_out ~expect:1
@@ -556,7 +556,7 @@ let%test_unit "OUT UIO push-pull writes PINS_OUT" =
     { State.reset with x = 1 }
   in
 
-  let after = execute_out before instruction in
+  let after = execute_out instruction before in
   [%test_result: int] after.pins_out ~expect:0b0000_0100
 ;;
 
@@ -572,7 +572,7 @@ let%test_unit "OUT UIO push-pull does not change PINS_OE" =
     { State.reset with x = 1; pins_oe = 0b1010_1010 }
   in
 
-  let after = execute_out before instruction in
+  let after = execute_out instruction before in
   [%test_result: int] after.pins_oe ~expect:0b1010_1010
 ;;
 
@@ -591,7 +591,7 @@ let%test_unit "OUT open-drain zero actively drives low" =
     }
   in
   
-  let after = execute_out before instruction in
+  let after = execute_out instruction before in
   [%test_result: int] after.pins_out ~expect:0b1111_1101;
   [%test_result: int] after.pins_oe ~expect:0b0000_0010
 ;;
@@ -608,7 +608,7 @@ let%test_unit "OUT open-drain one releases pin" =
     { State.reset with x = 1; pins_out = 0; pins_oe = 0xff }
   in
 
-  let after = execute_out before instruction in
+  let after = execute_out instruction before in
   [%test_result: int] after.pins_oe ~expect:0b1111_1101
 ;;
 
@@ -621,6 +621,303 @@ let%test_unit "OUT wraps PC at end of program memory" =
     { State.reset with pc = 63 }
   in
 
-  let after = execute_out before instruction in
+  let after = execute_out instruction before in
   [%test_result: int] after.pc ~expect:0
 ;;
+
+(* --- JMP --- *)
+
+let%test_unit "JMP ALWAYS jumps to target" =
+  let instruction =
+    Jmp.Always { target = Target.of_int_exn 42 }
+  in
+
+  let before =
+    { State.reset with pc = 7 }
+  in
+
+  let after = execute_jmp instruction Inputs.zero before in
+  [%test_result: int] after.pc ~expect:42
+;;
+
+let%test_unit "JMP X_ZERO jumps when X is zero" =
+  let instruction =
+    Jmp.If_zero { register = Register.X; target = Target.of_int_exn 20 }
+  in
+
+  let before =
+    { State.reset with pc = 3; x = 0 }
+  in
+
+  let after = execute_jmp instruction Inputs.zero before in
+  [%test_result: int] after.pc ~expect:20
+;;
+
+let%test_unit "JMP X_ZERO falls through when x is nonzero" =
+  let instruction =
+    Jmp.If_zero { register = Register.X; target = Target.of_int_exn 20 }
+  in
+
+  let before =
+    { State.reset with pc = 3; x = 1 }
+  in
+
+  let after = execute_jmp instruction Inputs.zero before in
+  [%test_result: int] after.pc ~expect:4;
+  [%test_result: int] after.x ~expect:1
+;;
+
+let%test_unit "JMP Y_ZERO" =
+  let instruction =
+    Jmp.If_zero { register = Register.Y; target = Target.of_int_exn 10 }
+  in
+
+  let before =
+    { State.reset with y = 0 }
+  in
+
+  let after = execute_jmp instruction Inputs.zero before in
+  [%test_result: int] after.pc ~expect:10
+;;
+
+let%test_unit "JMP C_ZERO" =
+  let instruction =
+    Jmp.If_zero { register = Register.C; target = Target.of_int_exn 10 }
+  in
+
+  let before =
+    { State.reset with c = 0 }
+  in
+
+  let after = execute_jmp instruction Inputs.zero before in
+  [%test_result: int] after.pc ~expect:10
+;;
+
+let%test_unit "JMP C_NZ_DEC with C=0 falls through without underflow" =
+  let instruction =
+    Jmp.C_nz_dec { target = Target.of_int_exn 5 }
+  in
+
+  let before =
+    { State.reset with pc = 2; c = 0 }
+  in
+
+  let after = execute_jmp instruction Inputs.zero before in
+  [%test_result: int] after.c ~expect:0;
+  [%test_result: int] after.pc ~expect:3
+;;
+
+let%test_unit "JMP C_NZ_DEC with C=1 decrements and falls through" =
+  let instruction =
+    Jmp.C_nz_dec { target = Target.of_int_exn 5 }
+  in
+
+  let before =
+    { State.reset with pc = 2; c = 1 }
+  in
+
+  let after = execute_jmp instruction Inputs.zero before in
+  [%test_result: int] after.c ~expect:0;
+  [%test_result: int] after.pc ~expect:3
+;;
+
+let%test_unit "JMP C_NZ_DEC with C=2 decrements and jumps" =
+  let instruction =
+    Jmp.C_nz_dec { target = Target.of_int_exn 5 }
+  in
+
+  let before =
+    { State.reset with pc = 2; c = 2 }
+  in
+
+  let after = execute_jmp instruction Inputs.zero before in
+  [%test_result: int] after.c ~expect:1;
+  [%test_result: int] after.pc ~expect:5
+;;
+
+let%test_unit "JMP C_NZ_DEC with C=255" =
+  let instruction =
+    Jmp.C_nz_dec { target = Target.of_int_exn 7 }
+  in
+
+  let before =
+    { State.reset with pc = 1; c = 255 }
+  in
+
+  let after = execute_jmp instruction Inputs.zero before in
+  [%test_result: int] after.c ~expect:254;
+  [%test_result: int] after.pc ~expect:7
+;;
+
+let%test_unit "JMP PIN_HIGH jumps when selected pin is high" =
+  let instruction =
+    Jmp.If_pin 
+      { level = Level.High 
+      ; bank = Input_bank.Ui
+      ; pin = Pin.of_int_exn 3
+      ; target = Target.of_int_exn 5 
+      }
+  in
+
+  let inputs =
+    { Inputs.ui_in = 0b0000_1000
+    ; uio_in = 0
+    }
+  in
+
+  let after = execute_jmp instruction inputs State.reset in
+  [%test_result: int] after.pc ~expect:5
+;;
+
+let%test_unit "JMP PIN_HIGH falls through when selected pin is low" =
+  let instruction =
+    Jmp.If_pin 
+      { level = Level.High 
+      ; bank = Input_bank.Ui
+      ; pin = Pin.of_int_exn 3
+      ; target = Target.of_int_exn 12 
+      }
+  in
+
+  let inputs =
+    { Inputs.ui_in = 0
+    ; uio_in = 0
+    }
+  in
+
+  let before =
+    { State.reset with pc = 4 }
+  in
+
+  let after = execute_jmp instruction inputs before in
+  [%test_result: int] after.pc ~expect:5
+;;
+
+let%test_unit "JMP PIN_LOW jumps when selected pin is low" =
+  let instruction =
+    Jmp.If_pin 
+      { level = Level.Low
+      ; bank = Input_bank.Uio
+      ; pin = Pin.of_int_exn 2
+      ; target = Target.of_int_exn 30
+      }
+  in
+
+  let inputs =
+    { Inputs.ui_in = 0
+    ; uio_in = 0b1111_1011
+    }
+  in
+
+  let after = execute_jmp instruction inputs State.reset in
+  [%test_result: int] after.pc ~expect:30
+;;
+
+let%test_unit "JMP PIN_HIGH uses selected input bank" =
+  let instruction =
+    Jmp.If_pin 
+      { level = Level.High
+      ; bank = Input_bank.Uio
+      ; pin = Pin.of_int_exn 0
+      ; target = Target.of_int_exn 10
+      }
+  in
+
+  let inputs =
+    { Inputs.ui_in = 1
+    ; uio_in = 0
+    }
+  in
+
+  let after = execute_jmp instruction inputs State.reset in
+  (* UI pin0 is high, but JMP is checking UIO pin0. *)
+  [%test_result: int] after.pc ~expect:1
+;;
+
+let%test_unit "JMP not-taken branch wraps PC" =
+  let instruction =
+    Jmp.If_zero
+      { register = Register.X
+      ; target = Target.of_int_exn 10
+      }
+  in
+
+  let before =
+    { State.reset with pc = 63; x = 1 }
+  in
+
+  let after = execute_jmp instruction Inputs.zero before in
+  [%test_result: int] after.pc ~expect:0
+;;
+
+let%test_unit "C_NZ_DEC produces exactly 8 loop iterations" =
+  let jump =
+    Jmp.C_nz_dec 
+      { target = Target.of_int_exn 4 }
+  in
+
+  let rec loop state jumps_taken =
+    let after =
+      execute_jmp jump Inputs.zero state 
+    in
+
+    if after.pc = 4
+    then
+      loop after (jumps_taken + 1)
+    else
+      after, jumps_taken
+  in
+  
+  let before =
+    { State.reset with pc = 5; c = 8 }
+  in
+
+  let after, jumps_taken = loop before 0 in
+  [%test_result: int] after.c ~expect:0;
+  (*
+   * For an 8-iteration loop:
+   *
+   * body #1 -> jump
+   * ...
+   * body #7 -> jump
+   * body #8 -> fall through
+   *
+   * So JMP is taken seven times.
+   *)
+  [%test_result: int] jumps_taken ~expect:7
+;;
+
+(* --- SYS --- *)
+
+let%test_unit "SYS NOP advances PC" =
+  let before = State.reset in
+  let after = execute_sys Sys.Nop before in
+  [%test_result: State.t] after ~expect:{ before with pc = 1 }
+;;
+
+let%test_unit "SYS HALT stops execution and holds PC" =
+  let before =
+    { State.reset with pc = 7 }
+  in
+
+  let after = execute_sys Sys.Halt before in 
+  [%test_result: int] after.pc ~expect:7;
+  [%test_result: Halt_reason.t option] after.halt_reason ~expect:(Some Halt_reason.Halt_instruction)
+;;
+
+let%test_unit "SYS HALT does not modify architectural state" = 
+  let before =
+    { State.reset with pc = 5
+    ; x = 0x12
+    ; y = 0x34
+    ; c = 8
+    ; pins_out = 0xaa
+    ; pins_oe = 0x55
+    ; uo_out = 0xf0
+    }
+  in
+
+  let after = execute_sys Sys.Halt before in
+  [%test_result: State.t] after
+    ~expect:{ before with halt_reason = Some Halt_reason.Halt_instruction }
+;; 
