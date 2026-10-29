@@ -96,6 +96,23 @@ let write_register register value (state : State.t) =
     { state with c = value }
 ;;
 
+(* --- Shift-register helpers --- *)
+let read_shift_register register (state : State.t) = 
+  match register with 
+  | Shift_register.X -> state.x
+  | Y -> state.y
+;;
+
+let write_shift_register register value (state : State.t) =
+  let value = mask8 value in 
+
+  match register with 
+  | Shift_register.X ->
+    { state with x = value }
+  | Y ->
+    { state with y = value }
+;;
+
 (* --- Input helpers --- *)
 
 let input_bank (inputs : Inputs.t) = function
@@ -203,4 +220,22 @@ let execute_wait (wait : Wait.t) (inputs : Inputs.t) (state : State.t) =
   if wait_condition_holds state inputs wait
   then advance_pc state 
   else state
+;;
+
+(* --- IN --- *)
+
+let execute_in ({ pin; bank; destination; order } : In.t) (inputs : Inputs.t) (state : State.t) =
+  let sampled_bit = input_bit inputs bank pin in
+  let old_value = read_shift_register destination state in
+  let new_value =
+    match order with 
+    | Shift_order.Lsb_first ->
+      (sampled_bit lsl 7) lor (old_value lsr 1)
+    | Msb_first ->
+      (old_value lsl 1) lor sampled_bit
+  in
+
+  state 
+  |> write_shift_register destination new_value
+  |> advance_pc
 ;;

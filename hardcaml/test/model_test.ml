@@ -257,3 +257,194 @@ let%test_unit "WAIT wraps PC after address 63" =
   let after = execute_wait wait Inputs.zero before in
   [%test_result: State.t] after ~expect:{ before with pc = 0 }
 ;;
+
+(* --- IN --- *)
+
+let%test_unit "IN LSB-first shifts 1 into X bit 7" =
+  let instruction =
+    { In.pin = Pin.of_int_exn 0
+    ; bank = Input_bank.Ui
+    ; destination = Shift_register.X
+    ; order = Shift_order.Lsb_first
+    }
+  in
+  let inputs =
+    { Inputs.ui_in = 0b0000_0001
+    ; uio_in = 0
+    }
+  in
+  let before = State.reset in
+  let after = execute_in instruction inputs before in
+  [%test_result: State.t] after ~expect:{ before with x = 0b1000_0000; pc = 1 }
+;;
+
+let%test_unit "IN LSB-first shifts existing X right" =
+  let instruction =
+    { In.pin = Pin.of_int_exn 0
+    ; bank = Input_bank.Ui
+    ; destination = Shift_register.X
+    ; order = Shift_order.Lsb_first
+    }
+  in
+  let before =
+    { State.reset with
+      x = 0b0101_0101
+    }
+  in
+  let inputs =
+    { Inputs.ui_in = 0b0000_0001
+    ; uio_in = 0
+    }
+  in
+  let after = execute_in instruction inputs before in
+  (*
+   * old X:
+   *  0101_0101
+   * shift right:
+   *  0010_1010
+   * sampled 1 inserted into bit 7:
+   *  1010_1010
+   *)
+  [%test_result: State.t] after ~expect:{ before with x = 0b1010_1010; pc = 1 }
+;;
+
+let%test_unit "IN LSB-first samples zero" =
+  let instruction =
+    { In.pin = Pin.of_int_exn 0
+    ; bank = Input_bank.Ui
+    ; destination = Shift_register.X
+    ; order = Shift_order.Lsb_first
+    }
+  in
+  let before =
+    { State.reset with
+      x = 0b1111_1111
+    }
+  in
+  let after = execute_in instruction Inputs.zero before in
+  [%test_result: State.t] after ~expect:{ before with x = 0b0111_1111; pc = 1 }
+;;
+
+let%test_unit "IN MSB-first shifts bit into bit 0" =
+  let instruction =
+    { In.pin = Pin.of_int_exn 2
+    ; bank = Input_bank.Ui
+    ; destination = Shift_register.X
+    ; order = Shift_order.Msb_first
+    }
+  in
+  let inputs =
+    { Inputs.ui_in = 0b0000_0100
+    ; uio_in = 0
+    }
+  in
+  let before = State.reset in
+  let after = execute_in instruction inputs before in
+  [%test_result: State.t] after ~expect:{ before with x = 0b0000_0001; pc = 1 }
+;;
+
+let%test_unit "IN MSB-first drops the old bit 7" =
+  let instruction =
+    { In.pin = Pin.of_int_exn 0
+    ; bank = Input_bank.Ui
+    ; destination = Shift_register.X
+    ; order = Shift_order.Msb_first
+    }
+  in
+  let before =
+    { State.reset with
+      x = 0b1000_0001
+    }
+  in
+  (* Shifting left pushes bit 7 out. Without the 8-bit mask, X would become
+     0b1_0000_0010 (258) instead of 0b0000_0010. *)
+  let after = execute_in instruction Inputs.zero before in
+  [%test_result: State.t] after ~expect:{ before with x = 0b0000_0010; pc = 1 }
+;;
+
+let%test_unit "IN can shift into Y" =
+  let instruction =
+    { In.pin = Pin.of_int_exn 0
+    ; bank = Input_bank.Ui
+    ; destination = Shift_register.Y
+    ; order = Shift_order.Lsb_first
+    }
+  in
+  let inputs =
+    { Inputs.ui_in = 1
+    ; uio_in = 0
+    }
+  in
+  let before = State.reset in
+  let after = execute_in instruction inputs before in
+  [%test_result: State.t] after ~expect:{ before with y = 0x80; pc = 1 }
+;;
+
+let%test_unit "IN reads selected input bank" =
+  let instruction =
+    { In.pin = Pin.of_int_exn 0
+    ; bank = Input_bank.Uio
+    ; destination = Shift_register.X
+    ; order = Shift_order.Lsb_first
+    }
+  in
+  let inputs =
+    { Inputs.ui_in = 0b0000_0001
+    ; uio_in = 0b0000_0000
+    }
+  in
+  let before = State.reset in
+  let after = execute_in instruction inputs before in
+  (* UI pin0 is high, but we're sampling UIO pin0 *)
+  [%test_result: State.t] after ~expect:{ before with pc = 1 }
+;;
+
+let%test_unit "IN reads selected pin only" =
+  let instruction =
+    { In.pin = Pin.of_int_exn 3
+    ; bank = Input_bank.Ui
+    ; destination = Shift_register.X
+    ; order = Shift_order.Lsb_first
+    }
+  in
+  let inputs =
+    { Inputs.ui_in = 0b0000_0100
+    ; uio_in = 0
+    }
+  in
+  let before = State.reset in
+  (* pin2 is high, but we're sampling pin3. *)
+  let after = execute_in instruction inputs before in
+  [%test_result: State.t] after ~expect:{ before with pc = 1 }
+;;
+
+let%test_unit "IN reconstructs an LSB-first byte" =
+  let instruction =
+    { In.pin = Pin.of_int_exn 0
+    ; bank = Input_bank.Ui
+    ; destination = Shift_register.X
+    ; order = Shift_order.Lsb_first
+    }
+  in
+  (* 0xB2 = 1011_0010, sent LSB-first (bit 0 first). The byte is not a
+     palindrome in binary, so a swapped bit order would give 0x4D instead.
+     (0xA5 = 1010_0101 reads the same both ways and could not catch that.) *)
+  let bits =
+    [ 0; 1; 0; 0; 1; 1; 0; 1 ]
+  in
+  let final_state =
+    List.fold bits ~init:State.reset ~f:(fun state received_bit ->
+      let inputs =
+        { Inputs.ui_in = received_bit
+        ; uio_in = 0
+        }
+      in
+      (* Reset PC here only because we're directly unit-testing execute_in.
+         In a real program there would be eight IN instructions / a loop. *)
+      let state =
+        { state with pc = 0 }
+      in
+      execute_in instruction inputs state)
+  in
+  [%test_result: int] final_state.x ~expect:0xB2
+;;
