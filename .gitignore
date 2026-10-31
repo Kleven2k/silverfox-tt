@@ -23,3 +23,5 @@ tt/
 # Dune-promoted binaries
 hardcaml/bin/*.exe
 hardcaml/bin/*.bc
+deprecated/bin/*.exe
+deprecated/bin/*.bc
