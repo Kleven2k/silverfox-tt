@@ -204,7 +204,7 @@ let create scope (i : _ I.t) =
         decoded.set_value
 
         (* SET_BITS *)
-      ; old_value |: decoded.set_value
+      ; old_value |:(decoded.set_value)
 
         (* CLEAR_BITS *)
       ; old_value &: ~:(decoded.set_value)
