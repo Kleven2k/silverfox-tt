@@ -49,6 +49,12 @@ let jmp_c_nz_dec target =
   Isa.Instruction.Jmp (Isa.Jmp.C_nz_dec { target = Isa.Target.of_int_exn target })
 ;;
 
+let jmp_if_pin level bank pin target =
+  Isa.Instruction.Jmp
+    (Isa.Jmp.If_pin
+      { level; bank; pin = Isa.Pin.of_int_exn pin; target = Isa.Target.of_int_exn target })
+;;
+
 (* --- SET registers --- *)
 
 let%test_unit "lockstep: SET X/Y/C then HALT" =
@@ -254,4 +260,40 @@ let%test_unit "lockstep: JMP C_nz_dec counted loop" =
       ]
   in
   Lockstep.run_exn ~cycles:12 program 
+;;
+
+(* ui_in = 0xB2 and uio_in = 0x4D (= ~0xB2): every pin differs between the
+   two banks, so a bank swap shows. 0xB2 also differs from its bit-reversal
+   on every pin, so a bits_msb/bits_lsb mix-up shows. Each pin is either 0
+   or 1, so for every pin one level is taken and the other is not. *)
+let%test_unit "lockstep: JMP If_pin, every pin, bank and level" =
+  let inputs _cycle = { Model.Inputs.ui_in = 0xB2; uio_in = 0x4D } in
+  List.iter Isa.Level.all ~f:(fun level ->
+    List.iter Isa.Input_bank.all ~f:(fun bank ->
+      List.iter (List.range 0 8) ~f:(fun pin ->
+        let program =
+          Model.Program.of_instructions_exn
+            [ jmp_if_pin level bank pin 2   (* 0 *)
+            ; marker                        (* 1: runs only if not taken *)
+            ; halt                          (* 2 *)
+            ]
+        in
+        Lockstep.run_exn ~inputs ~cycles:4 program)))
+;;
+
+(* ui_in is 0x00 in cycle 0 and 0xFF in cycle 1, when the JMP runs.
+   Reading the current input sees 1 and jumps; reading prev_ui would see 0. *)
+let%test_unit "lockstep: JMP If_pin reads the current input" =
+  let inputs cycle =
+    { Model.Inputs.ui_in = (if cycle = 1 then 0xFF else 0x00); uio_in = 0x00 }
+  in
+  let program =
+    Model.Program.of_instructions_exn
+      [ nop                                               (* 0 *)
+      ; jmp_if_pin Isa.Level.High Isa.Input_bank.Ui 0 3   (* 1 *)
+      ; marker                                            (* 2 *)
+      ; halt                                              (* 3 *)
+      ]
+  in
+  Lockstep.run_exn ~inputs ~cycles:5 program 
 ;;

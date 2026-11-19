@@ -180,10 +180,10 @@ let create scope (i : _ I.t) =
   let jmp_if_y_zero = jmp_condition_is (If_zero { register = Y; target = any_target }) in
   let jmp_if_c_zero = jmp_condition_is (If_zero { register = C; target = any_target }) in
   let jmp_c_nz_dec = jmp_condition_is (C_nz_dec { target = any_target }) in
-  let _jmp_if_pin_low =
+  let jmp_if_pin_low =
     jmp_condition_is (If_pin { level = Low; bank = Uio; pin = any_pin; target = any_target })
   in
-  let _jmp_if_pin_high =
+  let jmp_if_pin_high =
     jmp_condition_is (If_pin { level = High; bank = Uio; pin = any_pin; target = any_target })
   in
 
@@ -292,6 +292,21 @@ let create scope (i : _ I.t) =
   let c_nz_dec_taken = jmp_c_nz_dec &: c_nonzero &: (c_minus_one <>:. 0) in
   let c_decrement = execute &: jmp_c_nz_dec &: c_nonzero in
 
+  (* --- JMP If_pin --- *)
+
+  (* Selects one input bit, like the model's input_bit: bank chooses ui_in
+     or uio_in, pin 0 is the LSB. Uses the current inputs, not prev_*.
+     WAIT and IN will reuse this with their own bank/pin field. *)
+  let input_bit ~bank ~pin =
+    let bank_value =
+      mux2 (bank ==:. Isa.Input_bank.to_bits Ui) i.ui_in i.uio_in 
+    in
+    mux pin (bits_lsb bank_value)
+  in
+
+  let jmp_pin_value = input_bit ~bank:decoded.jmp_bank ~pin:decoded.jmp_pin in
+
+
   (* --- JMP: is the branch taken? --- *)
 
   (* Each term already includes is_jmp (via jmp_condition_is).
@@ -302,6 +317,8 @@ let create scope (i : _ I.t) =
     |: (jmp_if_y_zero &: (y ==:. 0))
     |: (jmp_if_c_zero &: (c ==:. 0))
     |: c_nz_dec_taken  
+    |: (jmp_if_pin_low &: ~:jmp_pin_value)
+    |: (jmp_if_pin_high &: jmp_pin_value)
   in
 
   let pc_after_execute = mux2 jump_taken decoded.jmp_target pc_plus_one in
