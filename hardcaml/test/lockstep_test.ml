@@ -45,6 +45,10 @@ let marker =
   set_gpio Isa.Gpio_register.Pins_out Isa.Gpio_operation.Write 0xB2
 ;;
 
+let jmp_c_nz_dec target =
+  Isa.Instruction.Jmp (Isa.Jmp.C_nz_dec { target = Isa.Target.of_int_exn target })
+;;
+
 (* --- SET registers --- *)
 
 let%test_unit "lockstep: SET X/Y/C then HALT" =
@@ -221,4 +225,33 @@ let%test_unit "lockstep: JMP If_zero not taken" =
         ]
     in
     Lockstep.run_exn ~cycles:5 program)
+;;
+
+(* C = 0: falls through, C stays 0 (an underflow would give 0xFF).
+   C = 1: falls through, C becomes 0.
+   C = 2: jumps, C becomes 1. *)
+let%test_unit "lockstep: JMP C_nz_dec at C = 0, 1, 2" = 
+  List.iter [ 0; 1; 2 ] ~f:(fun initial_c ->
+    let program =
+      Model.Program.of_instructions_exn
+        [ set_reg Isa.Register.C initial_c  (* 0 *)
+        ; jmp_c_nz_dec 3                    (* 1 *)
+        ; marker                            (* 2: runs only if not taken *)
+        ; halt                              (* 3 *)
+        ]
+    in
+    Lockstep.run_exn ~cycles:5 program)
+;;
+
+(* The body (the NOP at 1) must run exactly 3 times. *)
+let%test_unit "lockstep: JMP C_nz_dec counted loop" =
+  let program = 
+    Model.Program.of_instructions_exn
+      [ set_reg Isa.Register.C 3  (* 0 *)
+      ; nop                       (* 1: loop body *)
+      ; jmp_c_nz_dec 1            (* 2 *)
+      ; halt                      (* 3 *)
+      ]
+  in
+  Lockstep.run_exn ~cycles:12 program 
 ;;
