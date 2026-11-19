@@ -176,9 +176,9 @@ let create scope (i : _ I.t) =
   in
 
   let jmp_always = jmp_condition_is (Always { target = any_target }) in
-  let _jmp_if_x_zero = jmp_condition_is (If_zero { register = X; target = any_target }) in
-  let _jmp_if_y_zero = jmp_condition_is (If_zero { register = Y; target = any_target }) in
-  let _jmp_if_c_zero = jmp_condition_is (If_zero { register = C; target = any_target }) in
+  let jmp_if_x_zero = jmp_condition_is (If_zero { register = X; target = any_target }) in
+  let jmp_if_y_zero = jmp_condition_is (If_zero { register = Y; target = any_target }) in
+  let jmp_if_c_zero = jmp_condition_is (If_zero { register = C; target = any_target }) in
   let _jmp_c_nz_dec = jmp_condition_is (C_nz_dec { target = any_target }) in
   let _jmp_if_pin_low =
     jmp_condition_is (If_pin { level = Low; bank = Uio; pin = any_pin; target = any_target })
@@ -286,7 +286,12 @@ let create scope (i : _ I.t) =
 
   (* Each term already includes is_jmp (via jmp_condition_is).
      Further conditions get OR-ed in here. *)
-  let jump_taken = jmp_always in
+  let jump_taken = 
+    jmp_always
+    |: (jmp_if_x_zero &: (x ==:. 0))
+    |: (jmp_if_y_zero &: (y ==:. 0))
+    |: (jmp_if_c_zero &: (c ==:. 0)) 
+  in
 
   let pc_after_execute = mux2 jump_taken decoded.jmp_target pc_plus_one in
   let pc_next_value = mux2 (execute &: ~:(sys_halt)) pc_after_execute pc in

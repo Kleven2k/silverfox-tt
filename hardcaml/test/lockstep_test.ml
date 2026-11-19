@@ -35,6 +35,16 @@ let jmp_always target =
     (Isa.Jmp.Always { target = Isa.Target.of_int_exn target })
 ;;
 
+let jmp_if_zero register target =
+  Isa.Instruction.Jmp
+    (Isa.Jmp.If_zero { register; target = Isa.Target.of_int_exn target })
+;;
+
+(* Runs only if a jump that should have skipped it didn't. *)
+let marker =
+  set_gpio Isa.Gpio_register.Pins_out Isa.Gpio_operation.Write 0xB2
+;;
+
 (* --- SET registers --- *)
 
 let%test_unit "lockstep: SET X/Y/C then HALT" =
@@ -179,4 +189,36 @@ let%test_unit "lockstep: JMP Always jumps backward (endless loop)" =
       ]
   in
   Lockstep.run_exn ~cycles:10 program 
+;;
+
+(* Taken: only the tested register is zero, the other two are made non-zero.
+   An RTL that checks the wrong register sees non-zero and falls through. *)
+let%test_unit "lockstep: JMP If_zero taken" =
+  List.iter Isa.Register.all ~f:(fun register ->
+    let others =
+      List.filter Isa.Register.all ~f:(fun r -> not (Isa.Register.equal r register))
+    in
+    let program =
+      Model.Program.of_instructions_exn
+        (List.map others ~f:(fun r -> set_reg r 0x80)
+        @ [ jmp_if_zero register 4  (* 2 *)
+          ; marker                  (* 3: skipped *)
+          ; halt                    (* 4 *)
+          ])
+    in
+    Lockstep.run_exn ~cycles:6 program)
+;;
+
+(* Not taken: only the tested register is non-zero. *)
+let%test_unit "lockstep: JMP If_zero not taken" =
+  List.iter Isa.Register.all ~f:(fun register ->
+    let program =
+      Model.Program.of_instructions_exn
+        [ set_reg register 0x80     (* 0 *)
+        ; jmp_if_zero register 3    (* 1 *)
+        ; marker                    (* 2: runs *)
+        ; halt                      (* 3 *)  
+        ]
+    in
+    Lockstep.run_exn ~cycles:5 program)
 ;;
