@@ -107,19 +107,20 @@ let run_exn ?(inputs = fun _cycle -> Model.Inputs.zero) ~cycles (program : Model
   let input_trace = Array.init cycles ~f:inputs in
   let model_inputs cycle = input_trace.(cycle) in
   let expected_states = 
-    Model.run
-      Model.State.reset
-      ~program
-      ~cycles
-      ~inputs:model_inputs
+    Array.of_list
+      (Model.run
+        Model.State.reset
+        ~program
+        ~cycles
+        ~inputs:model_inputs)
   in
 
-  if List.length expected_states <> cycles + 1
+  if Array.length expected_states <> cycles + 1
   then
     raise_s
       [%message
         "Model.run returned wrong number of states"
-          (List.length expected_states : int)
+          (Array.length expected_states : int)
           (cycles : int)];
   
   (* --- Set up RTL --- *)
@@ -146,7 +147,7 @@ let run_exn ?(inputs = fun _cycle -> Model.Inputs.zero) ~cycles (program : Model
 
   (* --- State 0: immediately after CPU restart --- *)
 
-  let expected_initial = List.hd_exn expected_states in 
+  let expected_initial = expected_states.(0) in 
   let actual_initial = state_of_rtl ~program rtl_outputs in
 
   check_state_exn ~cycle:0 ~program ~before:expected_initial ~expected:expected_initial ~actual:actual_initial;
@@ -154,8 +155,8 @@ let run_exn ?(inputs = fun _cycle -> Model.Inputs.zero) ~cycles (program : Model
   (* --- Execution --- *)
 
   for cycle = 0 to cycles - 1 do 
-    let before = List.nth_exn expected_states cycle in
-    let expected = List.nth_exn expected_states (cycle + 1) in
+    let before = expected_states.(cycle) in
+    let expected = expected_states.(cycle + 1) in
 
     drive_inputs rtl_inputs input_trace.(cycle);
 

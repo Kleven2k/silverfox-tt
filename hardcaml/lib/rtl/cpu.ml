@@ -161,6 +161,7 @@ let create scope (i : _ I.t) =
   let is_set = decoded.opcode ==:. Isa.Opcode.to_bits Isa.Opcode.Set in
   let is_jmp = decoded.opcode ==:. Isa.Opcode.to_bits Isa.Opcode.Jmp in
   let is_sys = decoded.opcode ==:. Isa.Opcode.to_bits Isa.Opcode.Sys in
+  let is_delay = decoded.opcode ==:. Isa.Opcode.to_bits Isa.Opcode.Delay in
 
   (* --- SYS decode --- *)
 
@@ -254,7 +255,14 @@ let create scope (i : _ I.t) =
        drop prog_we
        run from PC 0
   *)
-  let can_fetch = ~:(i.prog_we) &: is_running in
+
+  (* A DELAY in progress: count down instead of fetching. *)
+  let delaying = delay_remaining <>:. 0 in
+
+  let can_fetch = ~:(i.prog_we) &: is_running &: ~:delaying in
+
+  (* One countdown step. prog_we pauses the countdown too. *)
+  let delay_tick = ~:(i.prog_we) &: is_running &: delaying in
 
   (* A legal fetched instruction may execute. *)
   let execute = can_fetch &: ~:(decoded.illegal) in
@@ -265,16 +273,24 @@ let create scope (i : _ I.t) =
   (* Legal SYS.HALT executes, then enters halted state. *)
   let halting = execute &: sys_halt in
 
+  (* DELAY 1 (field = 0) finishes in its own cycle; longer delays hold the
+     PC and count down from n - 1. *)
+  let delay_start = execute &: is_delay &: (decoded.delay <>:. 0) in
+  let delay_done = delay_tick &: (delay_remaining ==:. 1) in
+
   (* --- PC next-state logic --- *)
 
   let pc_plus_one = pc +:. 1 in
 
   (* For now:
-  
+
        legal ordinary instruction -> PC + 1
        SYS NOP                    -> PC + 1
        JMP taken                  -> jmp_target
        JMP not taken              -> PC + 1
+       DELAY 1                    -> PC + 1
+       DELAY n > 1 starts         -> hold
+       DELAY counting down        -> hold; PC + 1 on the last cycle
        illegal                    -> hold
        already halted             -> hold
        prog_we                    -> hold
@@ -321,8 +337,16 @@ let create scope (i : _ I.t) =
     |: (jmp_if_pin_high &: jmp_pin_value)
   in
 
-  let pc_after_execute = mux2 jump_taken decoded.jmp_target pc_plus_one in
-  let pc_next_value = mux2 (execute &: ~:(sys_halt)) pc_after_execute pc in
+  let pc_after_execute =
+    mux2 jump_taken decoded.jmp_target
+      (mux2 delay_start pc
+        pc_plus_one)
+  in
+  let pc_next_value =
+    mux2 (execute &: ~:(sys_halt)) pc_after_execute
+      (mux2 delay_done pc_plus_one
+        pc)
+  in
 
   (* --- X / Y / C next-state logic --- *)
 
@@ -342,8 +366,11 @@ let create scope (i : _ I.t) =
 
   (*--- DELAY state --- *)
 
-  (* DELAY is not implemented yet, so hold this register. *)
-  let delay_remaining_next_value = delay_remaining in
+  let delay_remaining_next_value =
+    mux2 delay_tick (delay_remaining -:. 1)
+      (mux2 delay_start decoded.delay
+        delay_remaining)
+  in
 
   (* --- Halt-status next-state logic --- *)
 

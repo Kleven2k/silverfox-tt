@@ -55,6 +55,10 @@ let jmp_if_pin level bank pin target =
       { level; bank; pin = Isa.Pin.of_int_exn pin; target = Isa.Target.of_int_exn target })
 ;;
 
+let delay cycles =
+  Isa.Instruction.Delay { cycles = Isa.Delay_cycles.of_int_exn cycles }
+;;
+
 (* --- SET registers --- *)
 
 let%test_unit "lockstep: SET X/Y/C then HALT" =
@@ -296,4 +300,43 @@ let%test_unit "lockstep: JMP If_pin reads the current input" =
       ]
   in
   Lockstep.run_exn ~inputs ~cycles:5 program 
+;;
+
+(* --- DELAY --- *)
+
+(* 1 is the special case (no countdown); 2 is the shortest countdown;
+   8192 is the maximum and uses every bit of the 13-bit counter.
+   The marker after the DELAY shows the exact cycle it ends on. *)
+let%test_unit "lockstep: DELAY n takes exactly n cycles" =
+  List.iter [ 1; 2; 3; 7; 8192 ] ~f:(fun n ->
+    let program = Model.Program.of_instructions_exn [ delay n; marker; halt ] in
+    Lockstep.run_exn ~cycles:(n + 4) program)
+;;
+
+(* Back-to-back DELAYs: the second must start only after the first ends.
+   Inputs change every cycle, so prev_ui/prev_uio during the countdown are
+   checked too. *)
+let%test_unit "lockstep: back-to-back DELAYs, inputs changing" =
+  let inputs cycle =
+    { Model.Inputs.ui_in = (cycle * 37) land 0xff
+    ; uio_in = (cycle * 91) land 0xff
+    }
+  in
+  let program =
+    Model.Program.of_instructions_exn [ delay 3; delay 2; delay 1; halt ]
+  in
+  Lockstep.run_exn ~inputs ~cycles:10 program
+;;
+
+(* A DELAY inside a counted loop, the shape of a UART bit loop. *)
+let%test_unit "lockstep: DELAY inside a C_nz_dec loop" =
+  let program =
+    Model.Program.of_instructions_exn
+      [ set_reg Isa.Register.C 3  (* 0 *)
+      ; delay 4                   (* 1: loop body *)
+      ; jmp_c_nz_dec 1            (* 2 *)
+      ; halt                      (* 3 *)
+      ]
+  in
+  Lockstep.run_exn ~cycles:25 program
 ;;
