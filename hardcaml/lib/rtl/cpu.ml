@@ -64,6 +64,11 @@ let sys_arg1 sys =
   Isa.Field.get Isa.Field.arg1 (Isa.Sys.encode sys)
 ;;
 
+(* JMP condition codes, derived from Isa. condition_to_bits needs a whole
+   Jmp.t, so these use a placeholder target/pin; only the condition matters. *)
+let any_target = Isa.Target.of_int_exn 0
+let any_pin = Isa.Pin.of_int_exn 0
+
 (* --- CPU --- *)
 
 let create scope (i : _ I.t) =
@@ -154,6 +159,7 @@ let create scope (i : _ I.t) =
   (* --- Opcode decode --- *)
 
   let is_set = decoded.opcode ==:. Isa.Opcode.to_bits Isa.Opcode.Set in
+  let is_jmp = decoded.opcode ==:. Isa.Opcode.to_bits Isa.Opcode.Jmp in
   let is_sys = decoded.opcode ==:. Isa.Opcode.to_bits Isa.Opcode.Sys in
 
   (* --- SYS decode --- *)
@@ -162,6 +168,24 @@ let create scope (i : _ I.t) =
 
   (* SYS NOP needs no special next_state logic.
      It simply follows the normal PC+1 path. *)
+
+  (* --- JMP decode --- *)
+
+  let jmp_condition_is jmp =
+    is_jmp &: (decoded.arg1 ==:. Isa.Jmp.condition_to_bits jmp)
+  in
+
+  let jmp_always = jmp_condition_is (Always { target = any_target }) in
+  let _jmp_if_x_zero = jmp_condition_is (If_zero { register = X; target = any_target }) in
+  let _jmp_if_y_zero = jmp_condition_is (If_zero { register = Y; target = any_target }) in
+  let _jmp_if_c_zero = jmp_condition_is (If_zero { register = C; target = any_target }) in
+  let _jmp_c_nz_dec = jmp_condition_is (C_nz_dec { target = any_target }) in
+  let _jmp_if_pin_low =
+    jmp_condition_is (If_pin { level = Low; bank = Uio; pin = any_pin; target = any_target })
+  in
+  let _jmp_if_pin_high =
+    jmp_condition_is (If_pin { level = High; bank = Uio; pin = any_pin; target = any_target })
+  in
 
   (* --- SET destination decode --- *)
 
@@ -249,13 +273,23 @@ let create scope (i : _ I.t) =
   
        legal ordinary instruction -> PC + 1
        SYS NOP                    -> PC + 1
+       JMP taken                  -> jmp_target
+       JMP not taken              -> PC + 1
        illegal                    -> hold
        already halted             -> hold
        prog_we                    -> hold
        
     Legal but not-yet-implemented instructions temporarily behave as NOPs.
   *)
-  let pc_next_value = mux2 (execute &: ~:(sys_halt)) pc_plus_one pc in
+
+  (* --- JMP: is the branch taken? --- *)
+
+  (* Each term already includes is_jmp (via jmp_condition_is).
+     Further conditions get OR-ed in here. *)
+  let jump_taken = jmp_always in
+
+  let pc_after_execute = mux2 jump_taken decoded.jmp_target pc_plus_one in
+  let pc_next_value = mux2 (execute &: ~:(sys_halt)) pc_after_execute pc in
 
   (* --- X / Y / C next-state logic --- *)
 

@@ -30,6 +30,11 @@ let nop =
   Isa.Instruction.Sys Isa.Sys.Nop
 ;;
 
+let jmp_always target =
+  Isa.Instruction.Jmp 
+    (Isa.Jmp.Always { target = Isa.Target.of_int_exn target })
+;;
+
 (* --- SET registers --- *)
 
 let%test_unit "lockstep: SET X/Y/C then HALT" =
@@ -147,4 +152,31 @@ let%test_unit "lockstep: previous inputs track ui_in/uio_in, also while halted" 
     }
   in
   Lockstep.run_exn ~inputs ~cycles:10 program 
+;;
+
+(* --- JMP --- *)
+
+let%test_unit "lockstep: JMP Always skips forward" =
+  (* The target must not be PC + 1: a jump to the next address looks the
+     same as no jump. If the jump fails, SET X runs and X becomes 0xB2. *)
+  let program =
+    Model.Program.of_instructions_exn
+      [ jmp_always 2
+      ; set_reg Isa.Register.X 0xB2
+      ; halt
+      ]
+  in
+  Lockstep.run_exn ~cycles:4 program
+;;
+
+let%test_unit "lockstep: JMP Always jumps backward (endless loop)" =
+  (* 0: NOP, 1: JMP 0 -> loops forever and never reaches HALT. *)
+  let program =
+    Model.Program.of_instructions_exn
+      [ nop
+      ; jmp_always 0
+      ; halt
+      ]
+  in
+  Lockstep.run_exn ~cycles:10 program 
 ;;
