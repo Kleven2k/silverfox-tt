@@ -76,6 +76,13 @@ let one_pin_inputs ~bank ~pin level =
   | Uio -> { Model.Inputs.ui_in = other_bank; uio_in = tested_bank }
 ;;
 
+let out_bit target source order =
+  Isa.Instruction.Out { target; source; order }
+;;
+
+let uo_pin pin = Isa.Out.Uo { pin = Isa.Pin.of_int_exn pin }
+let uio_pin pin mode = Isa.Out.Uio { pin = Isa.Pin.of_int_exn pin; mode }
+
 (* --- SET registers --- *)
 
 let%test_unit "lockstep: SET X/Y/C then HALT" =
@@ -457,4 +464,76 @@ let%test_unit "lockstep: eight INs build a byte, both orders" =
        @ [ halt ])
   in
   Lockstep.run_exn ~inputs ~cycles:18 program 
+;;
+
+(* --- OUT --- *)
+
+let%test_unit "lockstep: OUT, every target, source and order" =
+  (* X = 1001_0110 and Y = 0110_1001: across source and order the outgoing
+     bit is both 0 and 1. g and its complement give every pin an old value
+     of both 0 and 1, and pins_oe differs from pins_out. *)
+  List.iter Isa.Out.all ~f:(fun (out : Isa.Out.t) ->
+    List.iter [ 0x5A; 0xA5 ] ~f:(fun g ->
+      let program =
+        Model.Program.of_instructions_exn
+          [ set_reg Isa.Register.X 0x96
+          ; set_reg Isa.Register.Y 0x69
+          ; set_gpio 
+              Isa.Gpio_register.Pins_out 
+              Isa.Gpio_operation.Write
+              g
+          ; set_gpio 
+              Isa.Gpio_register.Pins_oe
+              Isa.Gpio_operation.Write 
+              (g lxor 0xFF)
+          ; set_gpio
+              Isa.Gpio_register.Uo_out
+              Isa.Gpio_operation.Write 
+              g
+          ; Isa.Instruction.Out out
+          ; halt 
+          ]
+      in
+      Lockstep.run_exn ~cycles:9 program))
+;;
+
+let%test_unit "lockstep: eight OUTs shift a byte out, both orders" =
+  (* X goes out LSB first on UO pin 0.
+     Y goes out MSB first on UIO pin 3. 
+     
+     Both source registers end at 0 because OUT shifts in zeroes. *)
+  let out_x_lsb =
+    out_bit (uo_pin 0) Isa.Shift_register.X Isa.Shift_order.Lsb_first
+  in
+  let out_y_msb =
+    out_bit (uio_pin 3 Isa.Out.Mode.Push_pull)
+      Isa.Shift_register.Y
+      Isa.Shift_order.Msb_first
+  in
+  let program =
+    Model.Program.of_instructions_exn
+      ([ set_reg Isa.Register.X 0xB2
+       ; set_reg Isa.Register.Y 0xB2
+       ]
+       @ List.init 8 ~f:(fun _ ->
+          out_x_lsb)
+       @ List.init 8 ~f:(fun _ ->
+          out_y_msb)
+       @ [ halt ])
+  in
+  Lockstep.run_exn ~cycles:20 program
+;;
+
+let%test_unit "lockstep: OUT open-drain on UO is illegal" =
+  let word =
+    0
+    |> Isa.Field.put Isa.Field.opcode (Isa.Opcode.to_bits Isa.Opcode.Out)
+    |> Isa.Field.put Isa.Field.bank 1
+    |> Isa.Field.put Isa.Field.output_mode 1
+  in
+  let program =
+    Model.Program.of_words_exn
+      [ word ]
+  in
+  Lockstep.run_exn ~cycles:3 program
 ;;

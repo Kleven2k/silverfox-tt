@@ -164,6 +164,7 @@ let create scope (i : _ I.t) =
   let is_delay = decoded.opcode ==:. Isa.Opcode.to_bits Isa.Opcode.Delay in
   let is_wait = decoded.opcode ==:. Isa.Opcode.to_bits Isa.Opcode.Wait in
   let is_in = decoded.opcode ==:. Isa.Opcode.to_bits Isa.Opcode.In in
+  let is_out = decoded.opcode ==:. Isa.Opcode.to_bits Isa.Opcode.Out in
 
   (* --- SYS decode --- *)
 
@@ -345,17 +346,71 @@ let create scope (i : _ I.t) =
 
   (* --- IN --- *)
 
-  let in_x = is_in &: (decoded.shift_register ==:. Isa.Shift_register.to_bits Isa.Shift_register.X) in
-  let in_y = is_in &: (decoded.shift_register ==:. Isa.Shift_register.to_bits Isa.Shift_register.Y) in
-  let in_msb_first = decoded.shift_order ==:. Isa.Shift_order.to_bits Isa.Shift_order.Msb_first in
+  (* Shared by IN and OUT: which register (X or Y) and which bit order. *)
+  let shift_reg_is_y =
+    decoded.shift_register ==:. Isa.Shift_register.to_bits Isa.Shift_register.Y
+  in
+  let shift_msb_first = decoded.shift_order ==:. Isa.Shift_order.to_bits Isa.Shift_order.Msb_first in
+
+  let in_x = is_in &: ~:shift_reg_is_y in
+  let in_y = is_in &: shift_reg_is_y in
   let shift_in old =
-    mux2 in_msb_first
+    mux2 shift_msb_first
       (* MSB-first:
          old <- { old[6:0], sampled_bit } *)
       (drop_top old ~width:1 @: selected_pin)
       (* LSB-first:
          old <- { sampled_bit, old[7:1] }*)
       (selected_pin @: drop_bottom old ~width:1)
+  in
+
+  (* --- OUT --- *)
+
+  (* For OUT, bank 1 = UO, bank 0 = UIO (not the Input_bank encoding). *)
+  let out_uo = is_out &: decoded.bank in
+  let out_uio = is_out &: ~:(decoded.bank) in
+  let open_drain = decoded.output_mode in
+  let out_x = is_out &: ~:shift_reg_is_y in
+  let out_y = is_out &: shift_reg_is_y in
+  let out_source = mux2 shift_reg_is_y y x in
+  let outgoing_bit = mux2 shift_msb_first (msb out_source) (lsb out_source) in
+
+  (* Replaces bit [pin] of [value] with [bit]; the other bits are kept. *)
+  let write_bit value ~pin bit =
+    List.mapi (bits_lsb value) ~f:(fun index old_bit ->
+      mux2 (pin ==:. index) bit old_bit)
+    |> concat_lsb
+  in
+
+  let out_write_uo = out_uo in
+
+  (* Push-pull always writes PINS_OUT.
+     Open-drain only writes PINS_OUT when transmitting 0. *)
+  let out_write_pins_out = out_uio &: (~:open_drain |: ~:outgoing_bit) in
+
+  (* Open-drain controls OE:
+     outgoing 0 -> OE=1, drive low
+     outgoing 1 -> OE=0, release *)
+  let out_write_pins_oe = out_uio &: open_drain in
+
+  let uo_out_after_out =
+    write_bit uo_out ~pin:decoded.arg1 outgoing_bit
+  in
+  let pins_out_after_out =
+    write_bit pins_out ~pin:decoded.arg1 outgoing_bit
+  in
+  let pins_oe_after_out =
+    write_bit pins_oe ~pin:decoded.arg1 (~:outgoing_bit)
+  in
+
+  let shift_out value =
+    mux2 shift_msb_first
+    (* MSB-first:
+       { value [6:0], 0 } *)
+    (drop_top value ~width:1 @: gnd)
+    (* LSB-first:
+       { 0, value[7:1] } *)
+    (gnd @: drop_bottom value ~width:1)
   in
 
   (* --- JMP: is the branch taken? --- *)
@@ -386,14 +441,16 @@ let create scope (i : _ I.t) =
   (* --- X / Y / C next-state logic --- *)
 
   let x_next_value = 
-    mux2 (execute&: set_x)
+    mux2 (execute &: set_x)
       decoded.set_value
-      (mux2 (execute &: in_x) (shift_in x) x)
+      (mux2 (execute &: in_x) (shift_in x) 
+        (mux2 (execute &: out_x) (shift_out x) x))
   in
   let y_next_value = 
     mux2 (execute &: set_y) 
       decoded.set_value 
-      (mux2 (execute &: in_y) (shift_in y) y) 
+      (mux2 (execute &: in_y) (shift_in y) 
+        (mux2 (execute &: out_y) (shift_out y) y)) 
   in
   let c_next_value = 
     mux2 (execute &: set_c) decoded.set_value 
@@ -403,9 +460,27 @@ let create scope (i : _ I.t) =
 
   (* --- GPIO next-state logic --- *)
 
-  let pins_out_next_value = mux2 (execute &: set_pins_out) pins_out_after_set pins_out in
-  let pins_oe_next_value = mux2 (execute &: set_pins_oe) pins_oe_after_set pins_oe in
-  let uo_out_next_value = mux2 (execute &: set_uo_out) uo_out_after_set uo_out in
+  let pins_out_next_value = 
+    mux2 (execute &: set_pins_out) pins_out_after_set 
+      (mux2 
+        (execute &: out_write_pins_out) 
+        pins_out_after_out 
+        pins_out) 
+  in
+  let pins_oe_next_value = 
+    mux2 (execute &: set_pins_oe) pins_oe_after_set 
+      (mux2 
+        (execute &: out_write_pins_oe)
+        pins_oe_after_out
+        pins_oe) 
+  in
+  let uo_out_next_value = 
+    mux2 (execute &: set_uo_out) uo_out_after_set
+      (mux2
+        (execute &: out_write_uo)
+        uo_out_after_out
+        uo_out) 
+  in
 
   (*--- DELAY state --- *)
 
