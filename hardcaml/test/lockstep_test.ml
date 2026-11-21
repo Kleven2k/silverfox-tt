@@ -59,6 +59,19 @@ let delay cycles =
   Isa.Instruction.Delay { cycles = Isa.Delay_cycles.of_int_exn cycles }
 ;;
 
+let wait_for condition bank pin =
+  Isa.Instruction.Wait { condition; bank; pin = Isa.Pin.of_int_exn pin }
+;;
+
+let one_pin_inputs ~bank ~pin level =
+  let mask = 1 lsl pin in
+  let tested_bank = if level = 1 then mask else 0xFF lxor mask in
+  let other_bank = if level = 1 then 0x00 else 0xFF in
+  match (bank : Isa.Input_bank.t) with
+  | Ui -> { Model.Inputs.ui_in = tested_bank; uio_in = other_bank }
+  | Uio -> { Model.Inputs.ui_in = other_bank; uio_in = tested_bank }
+;;
+
 (* --- SET registers --- *)
 
 let%test_unit "lockstep: SET X/Y/C then HALT" =
@@ -339,4 +352,60 @@ let%test_unit "lockstep: DELAY inside a C_nz_dec loop" =
       ]
   in
   Lockstep.run_exn ~cycles:25 program
+;;
+
+(* --- WAIT --- *)
+
+let%test_unit "lockstep: WAIT, every condition, bank, pin and level pair" =
+  List.iter Isa.Wait.Condition.all ~f:(fun condition ->
+    List.iter Isa.Input_bank.all ~f:(fun bank ->
+      List.iter (List.range 0 8) ~f:(fun pin ->
+        List.iter [ (0, 0); (0, 1); (1, 0); (1, 1) ] ~f:(fun (before, after) ->
+          let inputs cycle = 
+            one_pin_inputs ~bank ~pin (if cycle < 3 then before else after) in
+          let program = 
+            Model.Program.of_instructions_exn
+              [ nop
+              ; wait_for condition bank pin
+              ; marker 
+              ; halt
+              ]
+          in
+          Lockstep.run_exn ~inputs ~cycles:8 program))))
+;;
+
+let%test_unit "lockstep: WAIT Rising sees high input immediately after reset" =
+  let inputs _cycle =
+    one_pin_inputs ~bank:Isa.Input_bank.Ui ~pin:0 1
+  in
+  let program = 
+    Model.Program.of_instructions_exn
+      [ wait_for
+          Isa.Wait.Condition.Rising 
+          Isa.Input_bank.Ui
+          0
+      ; marker 
+      ; halt
+      ]
+  in
+  Lockstep.run_exn ~inputs ~cycles:4 program 
+;;
+
+let%test_unit "lockstep: WAIT does not remember edge during DELAY" =
+  let inputs cycle =
+    let level = if cycle >= 2 then 1 else 0 in
+    one_pin_inputs ~bank:Isa.Input_bank.Ui ~pin:3 level
+  in
+  let program =
+    Model.Program.of_instructions_exn
+      [ delay 5
+      ; wait_for 
+          Isa.Wait.Condition.Rising
+          Isa.Input_bank.Ui
+          3
+      ; marker
+      ; halt
+      ]
+  in
+  Lockstep.run_exn ~inputs ~cycles:12 program
 ;;

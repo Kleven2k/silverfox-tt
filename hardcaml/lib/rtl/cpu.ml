@@ -162,7 +162,7 @@ let create scope (i : _ I.t) =
   let is_jmp = decoded.opcode ==:. Isa.Opcode.to_bits Isa.Opcode.Jmp in
   let is_sys = decoded.opcode ==:. Isa.Opcode.to_bits Isa.Opcode.Sys in
   let is_delay = decoded.opcode ==:. Isa.Opcode.to_bits Isa.Opcode.Delay in
-
+  let is_wait = decoded.opcode ==:. Isa.Opcode.to_bits Isa.Opcode.Wait in
   (* --- SYS decode --- *)
 
   let sys_halt = is_sys &: (decoded.arg1 ==:. sys_arg1 Isa.Sys.Halt) in
@@ -311,17 +311,32 @@ let create scope (i : _ I.t) =
   (* --- JMP If_pin --- *)
 
   (* Selects one input bit, like the model's input_bit: bank chooses ui_in
-     or uio_in, pin 0 is the LSB. Uses the current inputs, not prev_*.
-     WAIT and IN will reuse this with their own bank/pin field. *)
-  let input_bit ~bank ~pin =
-    let bank_value =
-      mux2 (bank ==:. Isa.Input_bank.to_bits Ui) i.ui_in i.uio_in 
-    in
+     or uio_in, pin 0 is the LSB. *)
+  let select_bit ~ui ~uio ~bank ~pin =
+    let bank_value = mux2 (bank ==:. Isa.Input_bank.to_bits Ui) ui uio in
     mux pin (bits_lsb bank_value)
   in
-
+  
+  (* Current inputs (JMP If_pin, WAIT, IN) and previous samples (WAIT edges). *)
+  let input_bit = select_bit ~ui:i.ui_in ~uio:i.uio_in in
+  let previous_input_bit = select_bit ~ui:prev_ui ~uio:prev_uio in
   let jmp_pin_value = input_bit ~bank:decoded.jmp_bank ~pin:decoded.jmp_pin in
 
+  (* --- WAIT --- *)
+
+  let wait_current = input_bit ~bank:decoded.bank ~pin:decoded.arg1 in
+  let wait_previous = previous_input_bit ~bank:decoded.bank ~pin:decoded.arg1 in
+
+  (* Same order as Isa.Wait condition bits: Low 00, High 01, Rising 10, Falling 11. *)
+  let wait_holds =
+    mux decoded.wait_condition
+      [ ~:wait_current
+      ; wait_current
+      ; ~:wait_previous &: wait_current
+      ; wait_previous &: ~:wait_current
+      ]
+  in
+  let wait_stall = is_wait &: ~:wait_holds in
 
   (* --- JMP: is the branch taken? --- *)
 
@@ -339,7 +354,7 @@ let create scope (i : _ I.t) =
 
   let pc_after_execute =
     mux2 jump_taken decoded.jmp_target
-      (mux2 delay_start pc
+      (mux2 (delay_start |: wait_stall) pc
         pc_plus_one)
   in
   let pc_next_value =
