@@ -63,6 +63,10 @@ let wait_for condition bank pin =
   Isa.Instruction.Wait { condition; bank; pin = Isa.Pin.of_int_exn pin }
 ;;
 
+let in_bit pin bank destination order =
+  Isa.Instruction.In { pin = Isa.Pin.of_int_exn pin; bank; destination; order }
+;;
+
 let one_pin_inputs ~bank ~pin level =
   let mask = 1 lsl pin in
   let tested_bank = if level = 1 then mask else 0xFF lxor mask in
@@ -408,4 +412,49 @@ let%test_unit "lockstep: WAIT does not remember edge during DELAY" =
       ]
   in
   Lockstep.run_exn ~inputs ~cycles:12 program
+;;
+
+(* --- IN --- *)
+
+let%test_unit "lockstep: IN, every destination, order, bank, pin and level" =
+  (* Isa.In.all lists every pin, bank, destination and order. *)
+  List.iter Isa.In.all ~f:(fun (in_ : Isa.In.t) ->
+    List.iter [ 0; 1 ] ~f:(fun level ->
+      let inputs _cycle =
+        one_pin_inputs ~bank:in_.bank ~pin:(Isa.Pin.to_int in_.pin) level
+      in
+      let program =
+        Model.Program.of_instructions_exn
+          [ set_reg Isa.Register.X 0x96
+          ; set_reg Isa.Register.Y 0x69
+          ; Isa.Instruction.In in_
+          ; halt
+          ]
+      in
+      Lockstep.run_exn ~inputs ~cycles:5 program))
+;;
+
+let%test_unit "lockstep: eight INs build a byte, both orders" =
+  (* Cycles 0-7:
+     MSB-first into X, so the first sampled bit is bit 7 of 0xB2.
+     
+     Cycles 8-15:
+     LSB-first into Y, so the first sampled bit is bit 0 of 0xB2. *)
+  let bit cycle =
+    if cycle < 8
+    then (0xB2 lsr (7 - cycle)) land 1
+    else (0xB2 lsr (cycle - 8)) land 1
+  in
+  let inputs cycle =
+    { Model.Inputs.ui_in = bit cycle; uio_in = 0x00 }
+  in
+  let in_x_msb = in_bit 0 Isa.Input_bank.Ui Isa.Shift_register.X Isa.Shift_order.Msb_first in
+  let in_y_lsb = in_bit 0 Isa.Input_bank.Ui Isa.Shift_register.Y Isa.Shift_order.Lsb_first in
+  let program =
+    Model.Program.of_instructions_exn
+      (List.init 8 ~f:(fun _ -> in_x_msb)
+       @ List.init 8 ~f:(fun _ -> in_y_lsb)
+       @ [ halt ])
+  in
+  Lockstep.run_exn ~inputs ~cycles:18 program 
 ;;

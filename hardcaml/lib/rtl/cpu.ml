@@ -163,6 +163,8 @@ let create scope (i : _ I.t) =
   let is_sys = decoded.opcode ==:. Isa.Opcode.to_bits Isa.Opcode.Sys in
   let is_delay = decoded.opcode ==:. Isa.Opcode.to_bits Isa.Opcode.Delay in
   let is_wait = decoded.opcode ==:. Isa.Opcode.to_bits Isa.Opcode.Wait in
+  let is_in = decoded.opcode ==:. Isa.Opcode.to_bits Isa.Opcode.In in
+
   (* --- SYS decode --- *)
 
   let sys_halt = is_sys &: (decoded.arg1 ==:. sys_arg1 Isa.Sys.Halt) in
@@ -321,22 +323,40 @@ let create scope (i : _ I.t) =
   let input_bit = select_bit ~ui:i.ui_in ~uio:i.uio_in in
   let previous_input_bit = select_bit ~ui:prev_ui ~uio:prev_uio in
   let jmp_pin_value = input_bit ~bank:decoded.jmp_bank ~pin:decoded.jmp_pin in
+  
+  (* The current input pin selected by arg1 + bank.
+     Shared by WAIT and IN. *)
+  let selected_pin = input_bit ~bank:decoded.bank ~pin:decoded.arg1 in
 
   (* --- WAIT --- *)
 
-  let wait_current = input_bit ~bank:decoded.bank ~pin:decoded.arg1 in
   let wait_previous = previous_input_bit ~bank:decoded.bank ~pin:decoded.arg1 in
 
   (* Same order as Isa.Wait condition bits: Low 00, High 01, Rising 10, Falling 11. *)
   let wait_holds =
     mux decoded.wait_condition
-      [ ~:wait_current
-      ; wait_current
-      ; ~:wait_previous &: wait_current
-      ; wait_previous &: ~:wait_current
+      [ ~:selected_pin
+      ; selected_pin
+      ; ~:wait_previous &: selected_pin
+      ; wait_previous &: ~:selected_pin
       ]
   in
   let wait_stall = is_wait &: ~:wait_holds in
+
+  (* --- IN --- *)
+
+  let in_x = is_in &: (decoded.shift_register ==:. Isa.Shift_register.to_bits Isa.Shift_register.X) in
+  let in_y = is_in &: (decoded.shift_register ==:. Isa.Shift_register.to_bits Isa.Shift_register.Y) in
+  let in_msb_first = decoded.shift_order ==:. Isa.Shift_order.to_bits Isa.Shift_order.Msb_first in
+  let shift_in old =
+    mux2 in_msb_first
+      (* MSB-first:
+         old <- { old[6:0], sampled_bit } *)
+      (drop_top old ~width:1 @: selected_pin)
+      (* LSB-first:
+         old <- { sampled_bit, old[7:1] }*)
+      (selected_pin @: drop_bottom old ~width:1)
+  in
 
   (* --- JMP: is the branch taken? --- *)
 
@@ -365,8 +385,16 @@ let create scope (i : _ I.t) =
 
   (* --- X / Y / C next-state logic --- *)
 
-  let x_next_value = mux2 (execute &: set_x) decoded.set_value x in
-  let y_next_value = mux2 (execute &: set_y) decoded.set_value y in
+  let x_next_value = 
+    mux2 (execute&: set_x)
+      decoded.set_value
+      (mux2 (execute &: in_x) (shift_in x) x)
+  in
+  let y_next_value = 
+    mux2 (execute &: set_y) 
+      decoded.set_value 
+      (mux2 (execute &: in_y) (shift_in y) y) 
+  in
   let c_next_value = 
     mux2 (execute &: set_c) decoded.set_value 
       (mux2 c_decrement c_minus_one 
