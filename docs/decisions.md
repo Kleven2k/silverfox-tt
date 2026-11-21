@@ -438,3 +438,51 @@ steps, an edge missed during DELAY, and UART TX timing) and the
 documentation updates for these decisions.
 
 Next: the Hardcaml RTL core, tested in lockstep against this model.
+
+## 19-11-2026 - RTL core: SET, SYS, JMP and DELAY verified in lockstep
+The Hardcaml core is built from three parts: lib/rtl/decoder.ml (fields and
+the illegal flag, matched against Isa.Instruction.decode on all 65,536
+words), lib/rtl/program_memory.ml (64 x 16-bit words) and lib/rtl/cpu.ml.
+SET, SYS, all seven JMP conditions and DELAY are implemented; WAIT, IN, OUT
+and MOV still behave as NOPs.
+
+Decisions:
+1. Program memory is built from flip-flops with a combinational read, not
+   an SRAM macro. The word at PC is available in the same cycle, so fetch,
+   decode and execute take one clock and one RTL clock equals one model
+   step. An SRAM macro reads synchronously (adding a cycle to every fetch),
+   has no reset, and saves little area at 1 kbit. Latches are the fallback
+   if the GDS run shows the area does not fit.
+2. Two resets. The chip reset clears CPU state and program memory (to
+   HALT). A separate cpu_reset clears only the CPU state, so the host can
+   restart a loaded program without reloading it.
+3. prog_we pauses the CPU (no fetch, no DELAY countdown) while the host
+   writes program memory.
+4. One "may this cycle execute" signal. can_fetch (not paused, running, no
+   DELAY counting down) feeds execute, trap and halting, so new
+   instructions cannot get the pause and halt rules wrong.
+
+Verification: test/lockstep.ml runs the RTL and Model.step side by side
+and compares the whole architectural state after every cycle (17 lockstep
+tests). Setup is chip reset, load all 64 words, then cpu_reset, so the RTL
+starts in exactly Model.State.reset. Every instruction was mutation-checked:
+a deliberate bug was put into the RTL (swapped GPIO operations, PC + 2,
+wrong JMP register, inverted pin level, wrong bank, bit order reversed,
+C_nz_dec off by one, DELAY ending a cycle early, ...) and a test had to fail
+with a message naming the instruction. Two lessons:
+- Test values again mattered: the first GPIO sequence could not tell
+  SET_BITS from TOGGLE_BITS, and a SET/TOGGLE swap passed until the masks
+  were chosen so every step separates all four operations.
+- Lockstep cannot see behaviour the model does not have (prog_we, cpu_reset),
+  so those have directed tests in test/cpu_test.ml.
+
+AI use in this phase: I wrote the decoder, program memory, the cpu
+skeleton, the lockstep harness and most tests, and ran every mutation
+check. Claude reviewed each step, explained Hardcaml and OCaml errors
+(operator precedence, definition order, record annotations), proposed the
+structure for each instruction (signal outline plus code fragments that I
+typed in and adapted), chose the test values (including the GPIO sequence,
+checked with a script), suggested the mutations, did small tidy-ups and the
+DELAY code reordering on request, and wrote this entry.
+
+Next: WAIT, IN, OUT and MOV; then the TT wrapper and a first GDS run.
