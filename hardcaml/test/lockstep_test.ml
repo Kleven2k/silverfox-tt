@@ -67,6 +67,10 @@ let in_bit pin bank destination order =
   Isa.Instruction.In { pin = Isa.Pin.of_int_exn pin; bank; destination; order }
 ;;
 
+let mov destination source =
+  Isa.Instruction.Mov { destination; source }
+;;
+
 let one_pin_inputs ~bank ~pin level =
   let mask = 1 lsl pin in
   let tested_bank = if level = 1 then mask else 0xFF lxor mask in
@@ -536,4 +540,71 @@ let%test_unit "lockstep: OUT open-drain on UO is illegal" =
       [ word ]
   in
   Lockstep.run_exn ~cycles:3 program
+;;
+
+let%test_unit "lockstep: MOV, every destination and source" =
+  List.iter Isa.Mov.all ~f:(fun (mov_ : Isa.Mov.t) ->
+    let inputs _cycle =
+      { Model.Inputs.ui_in = 0xB2
+      ; uio_in = 0x4D
+      }
+    in
+    let program =
+      Model.Program.of_instructions_exn
+        [ set_reg Isa.Register.X 0x96
+        ; set_reg Isa.Register.Y 0x69
+        ; set_reg Isa.Register.C 0x3C
+        ; set_gpio 
+            Isa.Gpio_register.Pins_out
+            Isa.Gpio_operation.Write 
+            0x5A
+        ; set_gpio
+            Isa.Gpio_register.Pins_oe
+            Isa.Gpio_operation.Write
+            0xA5
+        ; set_gpio
+            Isa.Gpio_register.Uo_out
+            Isa.Gpio_operation.Write
+            0xC3
+        ; Isa.Instruction.Mov mov_
+        ; halt
+        ]
+    in
+    Lockstep.run_exn ~inputs ~cycles:9 program)
+;;
+
+let%test_unit "lockstep: MOV reads current inputs, not previous samples" =
+  let inputs cycle =
+    { Model.Inputs.ui_in =
+        ((cycle + 1) * 37) land 0xFF
+    ; uio_in =
+        ((cycle + 1) * 91) land 0xFF
+    }
+  in
+  let program =
+    Model.Program.of_instructions_exn
+      [ mov
+          Isa.Mov.Destination.X
+          Isa.Mov.Source.Ui_in
+      ; mov
+          Isa.Mov.Destination.Y
+          Isa.Mov.Source.Uio_in
+      ; halt
+      ]
+  in
+  Lockstep.run_exn ~inputs ~cycles:4 program
+;;
+
+let%test_unit "lockstep: MOV to input bank is illegal" =
+  List.iter [ 0b011; 0b100 ] ~f:(fun destination ->
+    let word =
+      0
+      |> Isa.Field.put
+          Isa.Field.opcode
+          (Isa.Opcode.to_bits Isa.Opcode.Mov)
+      |> Isa.Field.put
+          Isa.Field.arg1
+          destination
+    in
+    Lockstep.run_exn ~cycles:3 (Model.Program.of_words_exn [ word ]))
 ;;

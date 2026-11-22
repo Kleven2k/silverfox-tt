@@ -165,6 +165,7 @@ let create scope (i : _ I.t) =
   let is_wait = decoded.opcode ==:. Isa.Opcode.to_bits Isa.Opcode.Wait in
   let is_in = decoded.opcode ==:. Isa.Opcode.to_bits Isa.Opcode.In in
   let is_out = decoded.opcode ==:. Isa.Opcode.to_bits Isa.Opcode.Out in
+  let is_mov = decoded.opcode ==:. Isa.Opcode.to_bits Isa.Opcode.Mov in
 
   (* --- SYS decode --- *)
 
@@ -413,6 +414,45 @@ let create scope (i : _ I.t) =
     (gnd @: drop_bottom value ~width:1)
   in
 
+  (* --- MOV --- *)
+
+  (* Same order as Isa.Mov.Source encoding:
+     000 X
+     001 Y
+     010 C
+     011 UI_IN
+     100 UIO_IN
+     101 PINS_OUT
+     110 PINS_OE
+     111 UO_OUT
+     
+     Inputs are the CURRENT samples, not prev_ui / prev_uio. *)
+  let mov_value =
+    mux 
+      decoded.mov_source
+      [ x
+      ; y
+      ; c
+      ; i.ui_in 
+      ; i.uio_in
+      ; pins_out
+      ; pins_oe
+      ; uo_out
+      ]
+  in
+
+  (* MOV destination encoding is deliberately different from SET GPIO
+     destination encoding. *)
+  let mov_to destination =
+    is_mov &: (decoded.arg1 ==:. Isa.Mov.Destination.to_bits destination)
+  in
+  let mov_x = mov_to Isa.Mov.Destination.X in
+  let mov_y = mov_to Isa.Mov.Destination.Y in
+  let mov_c = mov_to Isa.Mov.Destination.C in
+  let mov_pins_out = mov_to Isa.Mov.Destination.Pins_out in
+  let mov_pins_oe = mov_to Isa.Mov.Destination.Pins_oe in
+  let mov_uo_out = mov_to Isa.Mov.Destination.Uo_out in
+
   (* --- JMP: is the branch taken? --- *)
 
   (* Each term already includes is_jmp (via jmp_condition_is).
@@ -443,43 +483,49 @@ let create scope (i : _ I.t) =
   let x_next_value = 
     mux2 (execute &: set_x)
       decoded.set_value
-      (mux2 (execute &: in_x) (shift_in x) 
-        (mux2 (execute &: out_x) (shift_out x) x))
+      (mux2 (execute &: mov_x) mov_value
+        (mux2 (execute &: in_x) (shift_in x) 
+          (mux2 (execute &: out_x) (shift_out x) x)))
   in
   let y_next_value = 
     mux2 (execute &: set_y) 
       decoded.set_value 
-      (mux2 (execute &: in_y) (shift_in y) 
-        (mux2 (execute &: out_y) (shift_out y) y)) 
+      (mux2 (execute &: mov_y) mov_value
+        (mux2 (execute &: in_y) (shift_in y) 
+          (mux2 (execute &: out_y) (shift_out y) y))) 
   in
   let c_next_value = 
     mux2 (execute &: set_c) decoded.set_value 
-      (mux2 c_decrement c_minus_one 
-        c) 
+      (mux2 (execute &: mov_c) mov_value
+        (mux2 c_decrement c_minus_one 
+          c)) 
   in
 
   (* --- GPIO next-state logic --- *)
 
   let pins_out_next_value = 
     mux2 (execute &: set_pins_out) pins_out_after_set 
-      (mux2 
-        (execute &: out_write_pins_out) 
-        pins_out_after_out 
-        pins_out) 
+      (mux2 (execute &: mov_pins_out) mov_value
+        (mux2 
+          (execute &: out_write_pins_out) 
+          pins_out_after_out 
+          pins_out))
   in
   let pins_oe_next_value = 
     mux2 (execute &: set_pins_oe) pins_oe_after_set 
-      (mux2 
-        (execute &: out_write_pins_oe)
-        pins_oe_after_out
-        pins_oe) 
+      (mux2 (execute &: mov_pins_oe) mov_value
+        (mux2 
+          (execute &: out_write_pins_oe)
+          pins_oe_after_out
+          pins_oe))
   in
   let uo_out_next_value = 
     mux2 (execute &: set_uo_out) uo_out_after_set
-      (mux2
-        (execute &: out_write_uo)
-        uo_out_after_out
-        uo_out) 
+      (mux2 (execute &: mov_uo_out) mov_value
+        (mux2
+          (execute &: out_write_uo)
+          uo_out_after_out
+          uo_out))
   in
 
   (*--- DELAY state --- *)
