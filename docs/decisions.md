@@ -486,3 +486,59 @@ checked with a script), suggested the mutations, did small tidy-ups and the
 DELAY code reordering on request, and wrote this entry.
 
 Next: WAIT, IN, OUT and MOV; then the TT wrapper and a first GDS run.
+
+## 26-11-2026 - Host interface: SPI slave, a hold control, status over SPI
+The core's program-loading ports (prog_we, prog_addr, prog_data, cpu_reset)
+need a transport to the outside. The full contract is in
+docs/host-interface.md; the decisions behind it:
+
+1. A 4-wire SPI slave (CS_N, SCLK, MOSI on ui_in[6:4], MISO on uo_out[1]),
+   the pinout already in info.yaml. It leaves all eight uio pins free for
+   protocol programs (I2C needs them for open-drain), unlike a parallel bus
+   on uio; and unlike SPI without MISO, the host can read status, registers
+   and the program back.
+2. Halt status is exposed only through the SPI STATUS command, with no
+   dedicated pin. Pins are the scarce resource in a protocol emulator, and
+   polling STATUS (about 56 us per frame at 1 MHz SCLK) is fast enough.
+3. The system clock targets 25 MHz, the value the old design passed GDS at;
+   static timing analysis of the new design sets the final value. SCLK is
+   not a clock: it is synchronized and edge-detected in the clk domain, so
+   it must be at most f_clk / 16 (provisionally 1 MHz).
+4. A new hold input pauses the CPU like prog_we, but without writing memory.
+   Without it the CPU would run a half-loaded program between SPI frames
+   and could toggle protocol pins. Loading is STOP, WRITE_INSTR x 64,
+   optional READ_INSTR, RESTART. Chip reset sets hold, so the CPU does
+   nothing until the host sends RESTART.
+5. WRITE_INSTR and READ_INSTR are rejected (result code 0x03) unless the
+   CPU is held, so a running program can never be changed mid-execution.
+6. Program readback shares the fetch read port: while held, memory is read
+   at the host address instead of the PC. A second read port would cost
+   another 16-bit 64:1 mux, as large as the fetch path.
+7. GPIO registers still reset to 0, as in the model, rather than to a
+   protocol idle level (the old design set TX high). The program sets its
+   own idle state; while held, the pins keep their last value.
+8. Host-reserved inputs (ui_in[6:4]) are masked to 0 before the CPU, and
+   uo_out[1] belongs to the wrapper, so programs can neither see host
+   traffic nor disturb MISO.
+9. prev_ui/prev_uio keep sampling while the CPU is held, so a WAIT after a
+   pause compares against recent input, not a value from before the pause.
+   This is RTL behaviour the model does not describe.
+
+STATUS returns halt_status (bits 1:0, the CPU's own encoding), HELD (bit 2)
+and the PC (bits 13:8); READ_STATE selects X, Y, C, PINS_OUT, PINS_OE or
+UO_OUT (selectors 0-5). The frame format, command codes and result codes
+are kept from the previous host-interface proposal, with the address range
+grown from 0-31 to 0-63.
+
+AI use in this phase: the choices in 1-3 were mine, from options and
+recommendations Claude set out (SPI vs a parallel bus vs SPI without MISO;
+status over SPI vs an extra pin; the clock target). Claude proposed hold,
+the shared read port and keeping reset at 0 (4, 6, 7), and recommended the
+smaller choices in 5 and the STATUS/READ_STATE layouts, which I accepted.
+I wrote the first draft of host-interface.md; Claude filled in the frame,
+command and result-code tables from the previous proposal, corrected the
+SCLK limit (the draft gave 25 MHz, the system clock), and wrote this entry
+from my notes.
+
+Next: the hold input and shared read address in cpu.ml, then the SPI
+wrapper.
