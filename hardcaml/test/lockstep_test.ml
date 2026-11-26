@@ -1,75 +1,6 @@
-open! Core 
-open Silverfox 
-
-let byte value = 
-  Isa.Byte.of_int_exn value 
-;;
-
-let set_reg register value = 
-  Isa.Instruction.Set
-    (Isa.Set.Reg 
-      { register
-      ; value = byte value 
-      })
-;;
-
-let set_gpio register operation mask =
-  Isa.Instruction.Set
-    (Isa.Set.Gpio 
-      { register
-      ; operation
-      ; mask = byte mask
-      })
-;;
-
-let halt =
-  Isa.Instruction.Sys Isa.Sys.Halt
-;;
-
-let nop = 
-  Isa.Instruction.Sys Isa.Sys.Nop
-;;
-
-let jmp_always target =
-  Isa.Instruction.Jmp 
-    (Isa.Jmp.Always { target = Isa.Target.of_int_exn target })
-;;
-
-let jmp_if_zero register target =
-  Isa.Instruction.Jmp
-    (Isa.Jmp.If_zero { register; target = Isa.Target.of_int_exn target })
-;;
-
-(* Runs only if a jump that should have skipped it didn't. *)
-let marker =
-  set_gpio Isa.Gpio_register.Pins_out Isa.Gpio_operation.Write 0xB2
-;;
-
-let jmp_c_nz_dec target =
-  Isa.Instruction.Jmp (Isa.Jmp.C_nz_dec { target = Isa.Target.of_int_exn target })
-;;
-
-let jmp_if_pin level bank pin target =
-  Isa.Instruction.Jmp
-    (Isa.Jmp.If_pin
-      { level; bank; pin = Isa.Pin.of_int_exn pin; target = Isa.Target.of_int_exn target })
-;;
-
-let delay cycles =
-  Isa.Instruction.Delay { cycles = Isa.Delay_cycles.of_int_exn cycles }
-;;
-
-let wait_for condition bank pin =
-  Isa.Instruction.Wait { condition; bank; pin = Isa.Pin.of_int_exn pin }
-;;
-
-let in_bit pin bank destination order =
-  Isa.Instruction.In { pin = Isa.Pin.of_int_exn pin; bank; destination; order }
-;;
-
-let mov destination source =
-  Isa.Instruction.Mov { destination; source }
-;;
+open! Core
+open Silverfox
+open Instructions
 
 let one_pin_inputs ~bank ~pin level =
   let mask = 1 lsl pin in
@@ -79,13 +10,6 @@ let one_pin_inputs ~bank ~pin level =
   | Ui -> { Model.Inputs.ui_in = tested_bank; uio_in = other_bank }
   | Uio -> { Model.Inputs.ui_in = other_bank; uio_in = tested_bank }
 ;;
-
-let out_bit target source order =
-  Isa.Instruction.Out { target; source; order }
-;;
-
-let uo_pin pin = Isa.Out.Uo { pin = Isa.Pin.of_int_exn pin }
-let uio_pin pin mode = Isa.Out.Uio { pin = Isa.Pin.of_int_exn pin; mode }
 
 (* --- SET registers --- *)
 

@@ -74,6 +74,31 @@ let load_instruction sim inputs ~addr instruction =
     ~data:(Isa.Instruction.encode instruction)
 ;;
 
+(* Hold programming mode active without changing the program under test.
+   Address 63 is repeatedly written with HALT, its reset value.
+   
+   Use this only on tests where the last program word is intentionally unused. *)
+let hold_prog_we sim (inputs : _ Cpu.I.t) n =
+  inputs.prog_we := Bits.vdd;
+
+  set_int
+    inputs.prog_addr
+    ~width:Isa.Arch.pc_width
+    (Isa.Arch.program_words - 1);
+
+  set_int 
+    inputs.prog_data
+    ~width:Isa.Arch.instruction_width
+    (Isa.Instruction.encode
+      (Isa.Instruction.Sys Isa.Sys.Halt));
+
+  cycle_n sim n;
+
+  inputs.prog_we := Bits.gnd
+;; 
+
+(* --- Execution helpers --- *)
+
 let run_cycles sim (inputs : _ Cpu.I.t) n =
   inputs.prog_we := Bits.gnd;
   cycle_n sim n
